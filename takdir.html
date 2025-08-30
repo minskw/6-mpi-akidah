@@ -1630,23 +1630,92 @@
             playQuiz();
         }
 
-        function showRaceInterface() {
-            let currentQuestion = 0;
-            let playerScore = 0;
-            let timeLeft = 30;
-            let raceTimer;
-            
-            // Get randomized questions for this race
-            const raceQuestions = getRandomQuestions(quizDataPool, 10);
-            
-            // Race positions (0-100, where 100 is finish line)
-            let racePositions = {
-                ahmad: 5,
-                siti: 3,
-                rizki: 7,
-                fatimah: 4,
-                umar: 6
-            };
+function showRaceInterface() {
+    let currentQuestion = 0;
+    let playerScore = 0;
+    let timeLeft = 30;
+    let raceTimer;
+
+    // Ambil pertanyaan random (misalnya 10 soal)
+    const raceQuestions = getRandomQuestions(quizDataPool, 10);
+
+    // Render soal
+    function showRaceQuestion() {
+        const question = raceQuestions[currentQuestion];
+        const raceHTML = `
+            <div class="fixed inset-0 bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 flex flex-col z-50">
+                <div class="flex-1 p-6 overflow-y-auto text-white">
+                    <h2 class="text-xl font-bold mb-4">Soal ${currentQuestion + 1} / ${raceQuestions.length}</h2>
+                    <p class="mb-4">${question.question}</p>
+                    <div class="space-y-3">
+                        ${question.options.map((opt, i) => `
+                            <button onclick="submitAnswer(${i})"
+                                class="w-full bg-white bg-opacity-20 py-2 px-4 rounded-lg hover:bg-opacity-40 transition">
+                                ${opt}
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>
+                <div class="p-4 bg-black bg-opacity-30 flex justify-between items-center">
+                    <span class="text-sm">⏱ ${timeLeft} detik</span>
+                    <span class="text-sm">Skor: ${playerScore}</span>
+                </div>
+                <!-- Tempat tampilkan pemain -->
+                <div id="racePlayersUI" class="p-3 bg-black bg-opacity-20 overflow-x-auto flex gap-2"></div>
+            </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', raceHTML);
+
+        // Dengarkan data pemain realtime dari Firestore
+        if (window.currentRaceId) {
+            window.FirebaseService.listenToRace(window.currentRaceId, (raceData) => {
+                updateRacePlayersUI(raceData.players || {});
+            });
+        }
+    }
+
+    // Update tampilan pemain
+    function updateRacePlayersUI(players) {
+        const container = document.getElementById("racePlayersUI");
+        if (!container) return;
+
+        container.innerHTML = Object.values(players).map(player => `
+            <div class="px-3 py-1 bg-green-100 rounded-full text-xs text-green-800">
+                ${player.name} ⭐ ${player.score}
+            </div>
+        `).join('');
+    }
+
+    // Kirim jawaban ke Firestore
+    window.submitAnswer = async function (index) {
+        const question = raceQuestions[currentQuestion];
+        const isCorrect = index === question.correct;
+        if (isCorrect) {
+            playerScore += 10;
+        }
+
+        // Update ke Firestore
+        if (window.currentRaceId) {
+            await window.FirebaseService.submitRaceAnswer(
+                window.currentRaceId,
+                currentQuestion,
+                question.options[index],
+                isCorrect,
+                playerScore
+            );
+        }
+
+        currentQuestion++;
+        if (currentQuestion < raceQuestions.length) {
+            document.querySelector(".fixed.inset-0").remove();
+            showRaceQuestion();
+        } else {
+            alert(`Race selesai! Skor akhir kamu: ${playerScore}`);
+        }
+    };
+
+    showRaceQuestion();
+}
 
             function showRaceQuestion() {
                 const question = raceQuestions[currentQuestion];
