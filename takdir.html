@@ -10,7 +10,7 @@
     <!-- Firebase SDK -->
     <script type="module">
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-        import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, limit, serverTimestamp, doc, setDoc, getDoc, updateDoc, deleteDoc } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+        import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, limit, serverTimestamp, doc, setDoc, getDoc, updateDoc, deleteDoc, getDocs } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
         import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
 
         // ✅ KONFIGURASI FIREBASE ANDA
@@ -101,7 +101,7 @@
         // Export functions to global scope
         window.FirebaseService = {
             // Real-time chat functions
-            sendChatMessage: async (message) => {
+            sendChatMessage: async (message, replyTo = null, mentionedUsers = []) => {
                 try {
                     // Get current user name
                     let userName = 'Siswa';
@@ -119,6 +119,8 @@
                         text: message,
                         userId: currentUser.uid,
                         userName: userName,
+                        replyTo: replyTo,
+                        mentionedUsers: mentionedUsers,
                         timestamp: serverTimestamp()
                     });
                 } catch (error) {
@@ -443,6 +445,22 @@
             background: #EF4444;
             color: white;
         }
+
+        .mention {
+            background-color: rgba(59, 130, 246, 0.2);
+            border-radius: 4px;
+            padding: 0 2px;
+            color: #3B82F6;
+            font-weight: 500;
+        }
+
+        .reply-indicator {
+            border-left: 3px solid #3B82F6;
+            padding-left: 8px;
+            margin-bottom: 4px;
+            font-size: 0.85em;
+            color: #6B7280;
+        }
     </style>
 </head>
 <body class="bg-gradient-to-br from-islamic-light via-islamic-pale to-islamic-bg min-h-screen body-pattern pb-20">
@@ -457,15 +475,15 @@
     <header class="bg-gradient-to-r from-islamic-green via-islamic-light to-islamic-green shadow-lg sticky top-0 z-40">
         <div class="flex items-center justify-between px-4 py-4">
             <div class="flex items-center space-x-3">
-                <div class="w-10 h-10 shadow-md">
-                  <img src="https://archive.org/download/media-interaktif-1/media%20interaktif%20%281%29.png" 
-                       alt="Logo" class="w-full h-full object-contain">
+                <div class="w-10 h-10 bg-white rounded-full flex items-center justify-center shadow-md overflow-hidden">
+                    <img src="https://archive.org/download/media-interaktif-1/media%20interaktif%20%281%29.png" 
+                         alt="Logo" class="w-full h-full object-cover">
                 </div>
 
                 <div>
                     <p class="text-xs text-white opacity-95">Emes Learning Media</p>
                     <h1 class="text-lg font-bold text-white drop-shadow-sm">Akidah Akhlak</h1>
-                    <p class="text-xs text-white opacity-95">Kelas 6 - Iman kepada Qadha & Qadar</p>
+                    <p class="text-xs text-white opacity-95">Qadha & Qadar-Kelas 6</p>
                 </div>
             </div>
             <div class="flex items-center space-x-2" onclick="showProfile()">
@@ -473,7 +491,7 @@
                     <span class="text-lg" id="headerAvatar">👤</span>
                 </div>
                 <div class="text-white text-xs">
-                    <div class="font-semibold" id="headerName">Siswa Baru</div>
+                    <div class="font-semibold" id="headerName">Namamu</div>
                     <div class="opacity-75 flex items-center">
                         <div class="w-2 h-2 bg-green-400 rounded-full mr-1 online-indicator"></div>
                         <span id="connectionStatus">Online</span>
@@ -492,7 +510,7 @@
             <div class="bg-white bg-opacity-95 backdrop-blur-sm rounded-2xl p-6 shadow-lg mb-6 islamic-pattern">
                 <div class="text-center">
                     <div class="w-16 h-16 bg-islamic-green rounded-full flex items-center justify-center mx-auto mb-4">
-                        <span class="text-2xl">🕋</span>
+                        <span class="text-2xl">🤲</span>
                     </div>
                     <h2 class="text-xl font-bold text-gray-800 mb-2">Beriman kepada Qadha dan Qadar</h2>
                     <p class="text-sm text-gray-600">Pelajari rukun iman yang keenam dengan cara yang menyenangkan</p>
@@ -797,6 +815,29 @@
                                 </div>
                             </div>
                         </div>
+                        <div class="relative">
+                            <button onclick="toggleUserList()" class="text-white bg-blue-600 bg-opacity-50 p-2 rounded-lg hover:bg-opacity-70">
+                                <i class="fas fa-at"></i>
+                            </button>
+                            <div id="userListDropdown" class="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg hidden z-10">
+                                <div class="p-2 max-h-40 overflow-y-auto" id="userList">
+                                    <!-- Daftar pengguna akan diisi oleh JavaScript -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Reply Indicator -->
+                <div id="replyIndicator" class="bg-blue-50 p-2 border-b border-blue-200 hidden">
+                    <div class="flex justify-between items-center">
+                        <div class="text-sm text-blue-700">
+                            <i class="fas fa-reply mr-1"></i>
+                            Membalas <span id="replyToUser"></span>
+                        </div>
+                        <button onclick="cancelReply()" class="text-blue-500 hover:text-blue-700">
+                            <i class="fas fa-times"></i>
+                        </button>
                     </div>
                 </div>
                 
@@ -1117,6 +1158,8 @@
         let onlineUsersUnsubscribe = null;
         let currentRaceUnsubscribe = null;
         let unreadCount = 0;
+        let replyingTo = null;
+        let mentioningUsers = [];
 
         // Function to shuffle array
         function shuffleArray(array) {
@@ -1208,6 +1251,48 @@
             if (playerCount) playerCount.textContent = `${users.length}/12`;
             if (onlineCount) onlineCount.textContent = `${users.length} Online`;
             if (chatOnlineCount) chatOnlineCount.textContent = `${users.length} siswa online`;
+            
+            // Update user list for mentions
+            updateUserListForMentions(users);
+        }
+
+        // Update user list for mentions in chat
+        function updateUserListForMentions(users) {
+            const userList = document.getElementById('userList');
+            if (!userList) return;
+            
+            userList.innerHTML = users.map(user => `
+                <div class="p-2 hover:bg-gray-100 cursor-pointer rounded" onclick="mentionUser('${user.name}', '${user.id}')">
+                    <div class="flex items-center">
+                        <div class="w-3 h-3 bg-green-500 rounded-full mr-2"></div>
+                        <span class="text-sm">${user.name}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Toggle user list dropdown
+        function toggleUserList() {
+            const dropdown = document.getElementById('userListDropdown');
+            if (dropdown) {
+                dropdown.classList.toggle('hidden');
+            }
+        }
+
+        // Mention a user in chat
+        function mentionUser(userName, userId) {
+            const chatInput = document.getElementById('chatInput');
+            if (chatInput) {
+                chatInput.value += `@${userName} `;
+                chatInput.focus();
+                mentioningUsers.push(userId);
+            }
+            
+            // Hide dropdown after selection
+            const dropdown = document.getElementById('userListDropdown');
+            if (dropdown) {
+                dropdown.classList.add('hidden');
+            }
         }
 
         // Display Firebase chat messages
@@ -1234,6 +1319,25 @@
                 
                 const isCurrentUser = msg.userId === window.currentUser?.uid;
                 
+                // Process mentions in message
+                let processedText = msg.text;
+                if (msg.mentionedUsers && msg.mentionedUsers.length > 0) {
+                    msg.mentionedUsers.forEach(userId => {
+                        // In a real app, you would fetch the username from userId
+                        processedText = processedText.replace(/@(\w+)/g, '<span class="mention">@$1</span>');
+                    });
+                }
+                
+                let replySection = '';
+                if (msg.replyTo) {
+                    replySection = `
+                        <div class="reply-indicator">
+                            <i class="fas fa-reply mr-1"></i>
+                            Membalas ${msg.replyTo.userName}
+                        </div>
+                    `;
+                }
+                
                 return `
                     <div class="flex ${isCurrentUser ? 'justify-end' : 'justify-start'} mb-3">
                         <div class="max-w-xs lg:max-w-md">
@@ -1242,14 +1346,71 @@
                                 <span class="text-xs text-gray-500">${timeString}</span>
                             </div>
                             <div class="p-3 rounded-lg ${isCurrentUser ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white' : 'bg-gray-100 border border-gray-200'}">
-                                ${msg.text}
+                                ${replySection}
+                                ${processedText}
                             </div>
+                            ${!isCurrentUser ? `
+                                <div class="flex mt-1 space-x-2 ${isCurrentUser ? 'justify-end' : 'justify-start'}">
+                                    <button onclick="replyToMessage('${msg.userName}', '${msg.userId}')" class="text-xs text-gray-500 hover:text-blue-500">
+                                        <i class="fas fa-reply mr-1"></i>Balas
+                                    </button>
+                                    <button onclick="startPrivateMessage('${msg.userName}', '${msg.userId}')" class="text-xs text-gray-500 hover:text-purple-500">
+                                        <i class="fas fa-envelope mr-1"></i>Privat
+                                    </button>
+                                </div>
+                            ` : ''}
                         </div>
                     </div>
                 `;
             }).join('');
             
             chatArea.scrollTop = chatArea.scrollHeight;
+            
+            // Update unread count if not on chat page
+            const diskusiPage = document.getElementById('diskusiPage');
+            if (diskusiPage.classList.contains('hidden')) {
+                unreadCount += 1;
+                updateUnreadBadge();
+            }
+        }
+
+        // Reply to a specific message
+        function replyToMessage(userName, userId) {
+            replyingTo = { userName, userId };
+            
+            // Show reply indicator
+            const replyIndicator = document.getElementById('replyIndicator');
+            const replyToUser = document.getElementById('replyToUser');
+            
+            if (replyIndicator && replyToUser) {
+                replyIndicator.classList.remove('hidden');
+                replyToUser.textContent = userName;
+            }
+            
+            // Focus on chat input
+            const chatInput = document.getElementById('chatInput');
+            if (chatInput) {
+                chatInput.focus();
+            }
+        }
+
+        // Cancel reply
+        function cancelReply() {
+            replyingTo = null;
+            const replyIndicator = document.getElementById('replyIndicator');
+            if (replyIndicator) {
+                replyIndicator.classList.add('hidden');
+            }
+        }
+
+        // Start a private message (placeholder for future implementation)
+        function startPrivateMessage(userName, userId) {
+            const chatInput = document.getElementById('chatInput');
+            if (chatInput) {
+                chatInput.value = `@${userName} `;
+                chatInput.focus();
+                mentioningUsers = [userId];
+            }
         }
 
         // Page Navigation
@@ -1539,8 +1700,6 @@
             }
         }
 
-
-
         async function saveProfile() {
             const name = document.getElementById('profileName').value.trim();
             const className = document.getElementById('profileClass').value;
@@ -1642,15 +1801,9 @@
             const raceQuestions = getRandomQuestions(quizDataPool, 10);
             
             // Race positions (0-100, where 100 is finish line)
-            let racePositions = {
-                ahmad: 5,
-                siti: 3,
-                rizki: 7,
-                fatimah: 4,
-                umar: 6
-            };
+            let racePositions = {};
 
-            function showRaceQuestion() {
+            async function showRaceQuestion() {
                 const question = raceQuestions[currentQuestion];
                 const raceHTML = `
                     <div class="fixed inset-0 bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 flex flex-col z-50">
@@ -1687,69 +1840,18 @@
                                 <div class="absolute right-1 top-1/2 transform -translate-y-1/2 text-white text-xs font-bold rotate-90">FINISH</div>
                                 
                                 <!-- Racing Cars with Real-time Positions -->
-                                <div class="space-y-2 py-2">
-                                    <!-- Ahmad's Car -->
-                                    <div class="relative h-8 bg-blue-900 bg-opacity-30 rounded flex items-center">
-                                        <div id="ahmadCar" class="absolute car-move" style="left: ${racePositions.ahmad}%">
-                                            <div class="flex items-center space-x-1">
-                                                <div class="text-2xl">🏎️</div>
-                                                <span class="text-white text-xs font-bold bg-green-500 px-2 py-1 rounded">Ahmad</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- Siti's Car -->
-                                    <div class="relative h-8 bg-blue-900 bg-opacity-30 rounded flex items-center">
-                                        <div id="sitiCar" class="absolute car-move" style="left: ${racePositions.siti}%">
-                                            <div class="flex items-center space-x-1">
-                                                <div class="text-2xl">🚗</div>
-                                                <span class="text-white text-xs font-bold bg-pink-500 px-2 py-1 rounded">Siti</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- Rizki's Car -->
-                                    <div class="relative h-8 bg-blue-900 bg-opacity-30 rounded flex items-center">
-                                        <div id="rizkiCar" class="absolute car-move" style="left: ${racePositions.rizki}%">
-                                            <div class="flex items-center space-x-1">
-                                                <div class="text-2xl">🏁</div>
-                                                <span class="text-white text-xs font-bold bg-purple-500 px-2 py-1 rounded">Rizki</span>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <!-- Fatimah's Car -->
-                                    <div class="relative h-8 bg-blue-900 bg-opacity-30 rounded flex items-center">
-                                        <div id="fatimahCar" class="absolute car-move" style="left: ${racePositions.fatimah}%">
-                                            <div class="flex items-center space-x-1">
-                                                <div class="text-2xl">🚙</div>
-                                                <span class="text-white text-xs font-bold bg-yellow-500 px-2 py-1 rounded">Fatimah</span>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <!-- Umar's Car -->
-                                    <div class="relative h-8 bg-blue-900 bg-opacity-30 rounded flex items-center">
-                                        <div id="umarCar" class="absolute car-move" style="left: ${racePositions.umar}%">
-                                            <div class="flex items-center space-x-1">
-                                                <div class="text-2xl">🚕</div>
-                                                <span class="text-white text-xs font-bold bg-orange-500 px-2 py-1 rounded">Umar</span>
-                                            </div>
-                                        </div>
+                                <div class="space-y-2 py-2" id="realPlayersTrack">
+                                    <!-- Konten akan diisi dengan data real-time dari Firebase -->
+                                    <div class="text-center text-white py-4">
+                                        <i class="fas fa-spinner fa-spin"></i> Memuat data pemain...
                                     </div>
                                 </div>
                             </div>
                             
                             <!-- Live Scores -->
-                            <div class="flex justify-center space-x-2 text-white text-xs">
+                            <div class="flex justify-center space-x-2 text-white text-xs" id="liveScores">
                                 <div class="bg-green-500 bg-opacity-80 rounded px-2 py-1">
-                                    <span class="font-bold">Ahmad: ${playerScore}</span>
-                                </div>
-                                <div class="bg-pink-500 bg-opacity-80 rounded px-2 py-1">
-                                    <span class="font-bold">Siti: ${Math.floor(Math.random() * 200) + 100}</span>
-                                </div>
-                                <div class="bg-purple-500 bg-opacity-80 rounded px-2 py-1">
-                                    <span class="font-bold">Rizki: ${Math.floor(Math.random() * 200) + 120}</span>
+                                    <span class="font-bold">Skor Anda: ${playerScore}</span>
                                 </div>
                             </div>
                         </div>
@@ -1778,6 +1880,9 @@
                 `;
                 document.body.insertAdjacentHTML('beforeend', raceHTML);
 
+                // Dapatkan data pemain real-time dari Firebase
+                await loadRealTimePlayers();
+
                 // Start countdown
                 raceTimer = setInterval(() => {
                     timeLeft--;
@@ -1801,42 +1906,146 @@
                 }, Math.random() * 15000 + 5000); // Random between 5-20 seconds
             }
 
-            function simulateOtherPlayersAnswering() {
-                // Simulate Siti answering
-                const sitiCorrect = Math.random() > 0.25; // 75% chance correct
-                racePositions.siti += sitiCorrect ? Math.random() * 15 + 10 : -Math.random() * 8;
-                
-                // Simulate Rizki answering
-                const rizkiCorrect = Math.random() > 0.35; // 65% chance correct
-                racePositions.rizki += rizkiCorrect ? Math.random() * 12 + 8 : -Math.random() * 6;
-                
-                // Simulate Fatimah answering
-                const fatimahCorrect = Math.random() > 0.4; // 60% chance correct
-                racePositions.fatimah += fatimahCorrect ? Math.random() * 10 + 7 : -Math.random() * 5;
-                
-                // Simulate Umar answering
-                const umarCorrect = Math.random() > 0.3; // 70% chance correct
-                racePositions.umar += umarCorrect ? Math.random() * 13 + 9 : -Math.random() * 7;
-
-                // Keep positions within bounds
-                Object.keys(racePositions).forEach(player => {
-                    racePositions[player] = Math.max(0, Math.min(95, racePositions[player]));
-                });
-
-                // Update car positions
-                updateCarPositions();
+            // Fungsi untuk memuat data pemain real-time dari Firebase
+            async function loadRealTimePlayers() {
+                try {
+                    if (!window.currentRaceId || !window.FirebaseService) {
+                        console.error('Race ID atau FirebaseService tidak tersedia');
+                        return;
+                    }
+                    
+                    // Dapatkan data race dari Firebase
+                    const raceRef = doc(window.db, 'races', window.currentRaceId);
+                    const raceSnap = await getDoc(raceRef);
+                    
+                    if (raceSnap.exists()) {
+                        const raceData = raceSnap.data();
+                        const players = raceData.players || {};
+                        
+                        // Inisialisasi posisi untuk setiap pemain
+                        Object.keys(players).forEach(playerId => {
+                            if (!racePositions[playerId]) {
+                                racePositions[playerId] = Math.random() * 10;
+                            }
+                        });
+                        
+                        // Update tampilan dengan data pemain real-time
+                        updateRealTimePlayersDisplay(players);
+                    }
+                } catch (error) {
+                    console.error('Error loading real-time players:', error);
+                }
             }
 
-            function updateCarPositions() {
-                const sitiCar = document.getElementById('sitiCar');
-                const rizkiCar = document.getElementById('rizkiCar');
-                const fatimahCar = document.getElementById('fatimahCar');
-                const umarCar = document.getElementById('umarCar');
+            // Fungsi untuk memperbarui tampilan pemain real-time
+            function updateRealTimePlayersDisplay(players) {
+                const realPlayersTrack = document.getElementById('realPlayersTrack');
+                const liveScores = document.getElementById('liveScores');
                 
-                if (sitiCar) sitiCar.style.left = racePositions.siti + '%';
-                if (rizkiCar) rizkiCar.style.left = racePositions.rizki + '%';
-                if (fatimahCar) fatimahCar.style.left = racePositions.fatimah + '%';
-                if (umarCar) umarCar.style.left = racePositions.umar + '%';
+                if (!realPlayersTrack) return;
+                
+                // Kosongkan elemen sebelum mengisi ulang
+                realPlayersTrack.innerHTML = '';
+                if (liveScores) liveScores.innerHTML = '';
+                
+                // Tambahkan skor pemain saat ini
+                if (liveScores && window.currentUser) {
+                    const currentPlayer = players[window.currentUser.uid];
+                    if (currentPlayer) {
+                        const scoreElement = document.createElement('div');
+                        scoreElement.className = 'bg-green-500 bg-opacity-80 rounded px-2 py-1';
+                        scoreElement.innerHTML = `<span class="font-bold">${currentPlayer.name}: ${currentPlayer.score || 0}</span>`;
+                        liveScores.appendChild(scoreElement);
+                    }
+                }
+                
+                // Tambahkan setiap pemain ke trek balapan
+                Object.entries(players).forEach(([playerId, playerData]) => {
+                    const isCurrentPlayer = window.currentUser && playerId === window.currentUser.uid;
+                    const playerPosition = racePositions[playerId] || 0;
+                    
+                    const playerElement = document.createElement('div');
+                    playerElement.className = 'relative h-8 bg-blue-900 bg-opacity-30 rounded flex items-center';
+                    
+                    const carColors = ['bg-green-500', 'bg-pink-500', 'bg-purple-500', 'bg-yellow-500', 'bg-orange-500'];
+                    const carIcons = ['🏎️', '🚗', '🏁', '🚙', '🚕'];
+                    const colorIndex = Object.keys(players).indexOf(playerId) % carColors.length;
+                    
+                    playerElement.innerHTML = `
+                        <div id="${playerId}Car" class="absolute car-move" style="left: ${playerPosition}%">
+                            <div class="flex items-center space-x-1">
+                                <div class="text-2xl">${carIcons[colorIndex]}</div>
+                                <span class="text-white text-xs font-bold ${carColors[colorIndex]} px-2 py-1 rounded">
+                                    ${playerData.name} ${isCurrentPlayer ? '(Anda)' : ''}
+                                </span>
+                            </div>
+                        </div>
+                    `;
+                    
+                    realPlayersTrack.appendChild(playerElement);
+                    
+                    // Tambahkan skor pemain ke live scores
+                    if (liveScores && !isCurrentPlayer) {
+                        const scoreElement = document.createElement('div');
+                        scoreElement.className = `${carColors[colorIndex]} bg-opacity-80 rounded px-2 py-1`;
+                        scoreElement.innerHTML = `<span class="font-bold">${playerData.name}: ${playerData.score || 0}</span>`;
+                        liveScores.appendChild(scoreElement);
+                    }
+                });
+            }
+
+            // Fungsi untuk mensimulasikan pemain lain menjawab
+            async function simulateOtherPlayersAnswering() {
+                try {
+                    if (!window.currentRaceId) return;
+                    
+                    // Dapatkan data race terbaru dari Firebase
+                    const raceRef = doc(window.db, 'races', window.currentRaceId);
+                    const raceSnap = await getDoc(raceRef);
+                    
+                    if (raceSnap.exists()) {
+                        const raceData = raceSnap.data();
+                        const players = raceData.players || {};
+                        
+                        // Simulasi setiap pemain (kecuali pemain saat ini) menjawab
+                        Object.entries(players).forEach(([playerId, playerData]) => {
+                            if (window.currentUser && playerId === window.currentUser.uid) return;
+                            
+                            const isCorrect = Math.random() > 0.3; // 70% kemungkinan benar
+                            const moveAmount = isCorrect ? Math.random() * 15 + 10 : -Math.random() * 8;
+                            
+                            // Perbarui posisi pemain
+                            racePositions[playerId] = Math.max(0, Math.min(95, (racePositions[playerId] || 0) + moveAmount));
+                            
+                            // Perbarui skor jika benar
+                            if (isCorrect && window.FirebaseService) {
+                                const newScore = (playerData.score || 0) + Math.max(50, timeLeft * 5);
+                                window.FirebaseService.submitRaceAnswer(
+                                    window.currentRaceId, 
+                                    currentQuestion, 
+                                    "Answered", 
+                                    true, 
+                                    newScore
+                                );
+                            }
+                        });
+                        
+                        // Perbarui tampilan posisi pemain
+                        updateCarPositions();
+                    }
+                } catch (error) {
+                    console.error('Error simulating other players:', error);
+                }
+            }
+
+            // Fungsi untuk memperbarui posisi mobil di trek
+            function updateCarPositions() {
+                Object.entries(racePositions).forEach(([playerId, position]) => {
+                    const carElement = document.getElementById(`${playerId}Car`);
+                    if (carElement) {
+                        carElement.style.left = position + '%';
+                    }
+                });
             }
 
             window.selectRaceAnswer = function(selectedIndex) {
@@ -1849,17 +2058,27 @@
                 if (isCorrect) {
                     const speedBonus = Math.max(50, timeLeft * 5); // Bonus for speed
                     playerScore += speedBonus;
-                    racePositions.ahmad += Math.random() * 10 + 15; // Move forward 15-25 steps
+                    racePositions[window.currentUser.uid] = Math.max(0, Math.min(95, (racePositions[window.currentUser.uid] || 0) + Math.random() * 10 + 15)); // Move forward 15-25 steps
                 } else {
-                    racePositions.ahmad = Math.max(0, racePositions.ahmad - (Math.random() * 5 + 5)); // Move backward 5-10 steps
+                    racePositions[window.currentUser.uid] = Math.max(0, (racePositions[window.currentUser.uid] || 0) - (Math.random() * 5 + 5)); // Move backward 5-10 steps
                 }
                 
-                // Keep Ahmad's position within bounds
-                racePositions.ahmad = Math.max(0, Math.min(95, racePositions.ahmad));
+                // Submit answer to Firebase
+                if (window.FirebaseService && window.currentRaceId) {
+                    window.FirebaseService.submitRaceAnswer(
+                        window.currentRaceId,
+                        currentQuestion,
+                        question.options[selectedIndex],
+                        isCorrect,
+                        playerScore
+                    );
+                }
 
-                // Animate Ahmad's car movement
-                const ahmadCar = document.getElementById('ahmadCar');
-                if (ahmadCar) ahmadCar.style.left = racePositions.ahmad + '%';
+                // Animate player's car movement
+                const playerCar = document.getElementById(`${window.currentUser.uid}Car`);
+                if (playerCar) {
+                    playerCar.style.left = racePositions[window.currentUser.uid] + '%';
+                }
 
                 // Show feedback with car movement effects
                 const options = document.querySelectorAll('.race-option');
@@ -1876,9 +2095,9 @@
 
                 // Show movement feedback
                 if (isCorrect) {
-                    showMovementFeedback('🏎️ Ahmad maju pesat! +' + Math.floor((Math.random() * 10 + 15)) + ' langkah', 'success');
+                    showMovementFeedback('🏎️ Anda maju pesat! +' + Math.floor((Math.random() * 10 + 15)) + ' langkah', 'success');
                 } else {
-                    showMovementFeedback('😔 Ahmad mundur! -' + Math.floor((Math.random() * 5 + 5)) + ' langkah', 'error');
+                    showMovementFeedback('😔 Anda mundur! -' + Math.floor((Math.random() * 5 + 5)) + ' langkah', 'error');
                 }
 
                 setTimeout(() => {
@@ -1915,15 +2134,23 @@
 
             function showRaceResults() {
                 // Determine final positions based on race positions
-                const finalPositions = [
-                    { name: 'Ahmad', position: racePositions.ahmad, score: playerScore, car: '🏎️' },
-                    { name: 'Siti', position: racePositions.siti, score: Math.floor(Math.random() * 300) + 200, car: '🚗' },
-                    { name: 'Rizki', position: racePositions.rizki, score: Math.floor(Math.random() * 300) + 150, car: '🏁' },
-                    { name: 'Fatimah', position: racePositions.fatimah, score: Math.floor(Math.random() * 250) + 180, car: '🚙' },
-                    { name: 'Umar', position: racePositions.umar, score: Math.floor(Math.random() * 280) + 160, car: '🚕' }
-                ].sort((a, b) => b.position - a.position);
+                const finalPositions = Object.entries(racePositions)
+                    .map(([playerId, position]) => {
+                        // Get player data from Firebase or use default
+                        const playerName = playerId === window.currentUser.uid ? 
+                            (document.getElementById('headerName')?.textContent || 'Anda') : 
+                            `Pemain ${Object.keys(racePositions).indexOf(playerId) + 1}`;
+                        
+                        return {
+                            name: playerName,
+                            position: position,
+                            score: playerId === window.currentUser.uid ? playerScore : Math.floor(Math.random() * 300) + 100,
+                            car: playerId === window.currentUser.uid ? '🏎️' : ['🚗', '🏁', '🚙', '🚕'][Object.keys(racePositions).indexOf(playerId) % 4]
+                        };
+                    })
+                    .sort((a, b) => b.position - a.position);
 
-                const playerRank = finalPositions.findIndex(p => p.name === 'Ahmad') + 1;
+                const playerRank = finalPositions.findIndex(p => p.name === (document.getElementById('headerName')?.textContent || 'Anda')) + 1;
                 const medals = ['🥇', '🥈', '🥉', '🏅', '🎖️'];
                 const correctAnswers = Math.floor(playerScore / 100);
                 
@@ -1946,7 +2173,7 @@
                             <h3 class="text-2xl font-bold text-gray-800 mb-2">
                                 ${playerRank === 1 ? '🎉 JUARA 1! 🎉' : playerRank === 2 ? '👏 JUARA 2!' : playerRank === 3 ? '👍 JUARA 3!' : `Peringkat ${playerRank}`}
                             </h3>
-                            <p class="text-gray-600 mb-2">Posisi Akhir: <span class="font-bold text-2xl text-orange-600">${racePositions.ahmad.toFixed(0)}%</span></p>
+                            <p class="text-gray-600 mb-2">Posisi Akhir: <span class="font-bold text-2xl text-orange-600">${racePositions[window.currentUser.uid]?.toFixed(0) || 0}%</span></p>
                             <p class="text-gray-600 mb-6">Skor Total: <span class="font-bold text-xl text-green-600">${playerScore}</span></p>
                             
                             <!-- Final Race Track -->
@@ -1956,9 +2183,9 @@
                                     ${finalPositions.map((player, index) => `
                                         <div class="flex items-center justify-between text-white text-sm">
                                             <div class="flex items-center space-x-2">
-                                                <span>${medals[index]}</span>
+                                                <span>${medals[index] || '🎯'}</span>
                                                 <span>${player.car}</span>
-                                                <span class="font-bold ${player.name === 'Ahmad' ? 'text-green-400' : ''}">${player.name}</span>
+                                                <span class="font-bold ${player.name === (document.getElementById('headerName')?.textContent || 'Anda') ? 'text-green-400' : ''}">${player.name}</span>
                                             </div>
                                             <span class="font-bold">${player.position.toFixed(0)}%</span>
                                         </div>
@@ -1975,11 +2202,11 @@
                                     </div>
                                     <div class="flex justify-between">
                                         <span>Posisi Akhir:</span>
-                                        <span class="font-bold">Peringkat ${playerRank} dari 5</span>
+                                        <span class="font-bold">Peringkat ${playerRank} dari ${finalPositions.length}</span>
                                     </div>
                                     <div class="flex justify-between">
                                         <span>Jarak Tempuh:</span>
-                                        <span class="font-bold">${racePositions.ahmad.toFixed(0)}% menuju finish</span>
+                                        <span class="font-bold">${racePositions[window.currentUser.uid]?.toFixed(0) || 0}% menuju finish</span>
                                     </div>
                                     <div class="flex justify-between">
                                         <span>Akurasi:</span>
@@ -2272,8 +2499,10 @@
             const message = input.value.trim();
             
             if (message && window.FirebaseService) {
-                window.FirebaseService.sendChatMessage(message);
+                window.FirebaseService.sendChatMessage(message, replyingTo, mentioningUsers);
                 input.value = '';
+                cancelReply();
+                mentioningUsers = [];
             }
         }
 
@@ -2294,6 +2523,13 @@
             const modal = document.getElementById('materiModal');
             if (event.target === modal) {
                 closeMateri();
+            }
+            
+            // Close user list dropdown when clicking outside
+            const userListDropdown = document.getElementById('userListDropdown');
+            const userListButton = document.querySelector('[onclick="toggleUserList()"]');
+            if (userListDropdown && !userListDropdown.contains(event.target) && !userListButton.contains(event.target)) {
+                userListDropdown.classList.add('hidden');
             }
         });
 
