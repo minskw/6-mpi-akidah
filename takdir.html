@@ -56,7 +56,9 @@
             
             if (!userSnap.exists()) {
                 await setDoc(userRef, {
-                    name: 'Ahmad',
+                    name: 'Siswa Baru',
+                    photo: '',
+                    class: '6A',
                     totalScore: 0,
                     racesPlayed: 0,
                     accuracy: 0,
@@ -68,6 +70,31 @@
                     lastActive: serverTimestamp(),
                     isOnline: true
                 });
+                
+                // Update header with user data
+                const userData = userSnap.data();
+                const avatar = userData.photo && userData.photo.startsWith('data:image') 
+                    ? `<img src="${userData.photo}" class="w-full h-full object-cover rounded-full">`
+                    : (userData.photo || '👤');
+                updateHeaderProfile({ name: userData.name, avatar: avatar });
+            }
+        }
+
+        // Update header profile display
+        function updateHeaderProfile(userData) {
+            const headerName = document.getElementById('headerName');
+            const headerAvatar = document.getElementById('headerAvatar');
+            
+            if (headerName && userData.name) {
+                headerName.textContent = userData.name;
+            }
+            
+            if (headerAvatar && userData.avatar) {
+                if (userData.avatar.startsWith('<img')) {
+                    headerAvatar.innerHTML = userData.avatar;
+                } else {
+                    headerAvatar.textContent = userData.avatar;
+                }
             }
         }
 
@@ -76,10 +103,22 @@
             // Real-time chat functions
             sendChatMessage: async (message) => {
                 try {
+                    // Get current user name
+                    let userName = 'Siswa';
+                    try {
+                        const userRef = doc(db, 'users', currentUser.uid);
+                        const userSnap = await getDoc(userRef);
+                        if (userSnap.exists()) {
+                            userName = userSnap.data().name || 'Siswa';
+                        }
+                    } catch (error) {
+                        console.log('Using default name');
+                    }
+                    
                     await addDoc(collection(db, 'chatMessages'), {
                         text: message,
                         userId: currentUser.uid,
-                        userName: 'Ahmad',
+                        userName: userName,
                         timestamp: serverTimestamp()
                     });
                 } catch (error) {
@@ -130,8 +169,20 @@
                         const raceData = raceSnap.data();
                         const players = raceData.players || {};
                         
+                        // Get current user name
+                        let userName = 'Siswa';
+                        try {
+                            const userRef = doc(db, 'users', currentUser.uid);
+                            const userSnap = await getDoc(userRef);
+                            if (userSnap.exists()) {
+                                userName = userSnap.data().name || 'Siswa';
+                            }
+                        } catch (error) {
+                            console.log('Using default name');
+                        }
+                        
                         players[currentUser.uid] = {
-                            name: 'Ahmad',
+                            name: userName,
                             score: 0,
                             position: 0,
                             answers: [],
@@ -245,6 +296,24 @@
                     });
                     callback(users);
                 });
+            },
+
+            // Profile update function
+            updateUserProfile: async (profileData) => {
+                if (currentUser) {
+                    try {
+                        const userRef = doc(db, 'users', currentUser.uid);
+                        await updateDoc(userRef, {
+                            ...profileData,
+                            lastActive: serverTimestamp()
+                        });
+                        return true;
+                    } catch (error) {
+                        console.error('Error updating profile:', error);
+                        return false;
+                    }
+                }
+                return false;
             },
 
             // Cleanup on page unload
@@ -389,20 +458,20 @@
         <div class="flex items-center justify-between px-4 py-4">
             <div class="flex items-center space-x-3">
                 <div class="w-10 h-10 bg-white rounded-full flex items-center justify-center shadow-md">
-                    <span class="text-xl">🤲</span>
+                    <span class="text-xl">🕌</span>
                 </div>
                 <div>
-                  <p class="text-xs text-white opacity-95">Emes Learning Media</p>
-                    <h1 class="text-lg font-bold text-white drop-shadow-sm">Akidah Akhlak Kelas 6 MI</h1>
-                    <p class="text-xs text-white opacity-95">Beriman kepada Qadha dan Qadar</p>
+                    <p class="text-xs text-white opacity-95">Emes Learning Media</p>
+                    <h1 class="text-lg font-bold text-white drop-shadow-sm">Akidah Akhlak</h1>
+                    <p class="text-xs text-white opacity-95">Kelas 6 - Iman kepada Qadha & Qadar</p>
                 </div>
             </div>
             <div class="flex items-center space-x-2" onclick="showProfile()">
                 <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center shadow-md cursor-pointer">
-                    <span class="text-lg">👤</span>
+                    <span class="text-lg" id="headerAvatar">👤</span>
                 </div>
                 <div class="text-white text-xs">
-                    <div class="font-semibold">Ahmad</div>
+                    <div class="font-semibold" id="headerName">Siswa Baru</div>
                     <div class="opacity-75 flex items-center">
                         <div class="w-2 h-2 bg-green-400 rounded-full mr-1 online-indicator"></div>
                         <span id="connectionStatus">Online</span>
@@ -421,7 +490,7 @@
             <div class="bg-white bg-opacity-95 backdrop-blur-sm rounded-2xl p-6 shadow-lg mb-6 islamic-pattern">
                 <div class="text-center">
                     <div class="w-16 h-16 bg-islamic-green rounded-full flex items-center justify-center mx-auto mb-4">
-                        <span class="text-2xl">🤲</span>
+                        <span class="text-2xl">🕋</span>
                     </div>
                     <h2 class="text-xl font-bold text-gray-800 mb-2">Beriman kepada Qadha dan Qadar</h2>
                     <p class="text-sm text-gray-600">Pelajari rukun iman yang keenam dengan cara yang menyenangkan</p>
@@ -1241,16 +1310,38 @@
             document.getElementById('materiModal').classList.add('hidden');
         }
 
-        function showProfile() {
+        async function showProfile() {
+            // Get current user data from Firebase
+            let userData = { name: 'Siswa Baru', totalScore: 0, racesPlayed: 0, accuracy: 0, class: '6A' };
+            
+            if (window.currentUser && window.db) {
+                try {
+                    const { doc, getDoc } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+                    const userRef = doc(window.db, 'users', window.currentUser.uid);
+                    const userSnap = await getDoc(userRef);
+                    
+                    if (userSnap.exists()) {
+                        userData = userSnap.data();
+                    }
+                } catch (error) {
+                    console.log('Using default profile data');
+                }
+            }
+            
+            // Get photo display
+            const photoDisplay = userData.photo && userData.photo.startsWith('data:image') 
+                ? `<img src="${userData.photo}" class="w-full h-full object-cover rounded-full">`
+                : `<span class="text-3xl">${userData.photo || '👤'}</span>`;
+            
             const profileHTML = `
                 <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                    <div class="bg-white rounded-xl p-6 max-w-sm w-full mx-4 bounce-in">
+                    <div class="bg-white rounded-xl p-6 max-w-sm w-full mx-4 bounce-in max-h-screen overflow-y-auto">
                         <div class="text-center mb-6">
-                            <div class="w-20 h-20 bg-islamic-accent rounded-full flex items-center justify-center mx-auto mb-3">
-                                <span class="text-3xl">👤</span>
+                            <div class="w-20 h-20 bg-islamic-accent rounded-full flex items-center justify-center mx-auto mb-3 overflow-hidden">
+                                ${photoDisplay}
                             </div>
-                            <h3 class="text-xl font-bold text-gray-800">Ahmad Fauzi</h3>
-                            <p class="text-sm text-gray-600">Kelas 5A • Level 3</p>
+                            <h3 class="text-xl font-bold text-gray-800" id="displayName">${userData.name || 'Siswa Baru'}</h3>
+                            <p class="text-sm text-gray-600">Kelas ${userData.class || '6A'} • Level ${Math.floor((userData.totalScore || 0) / 500) + 1}</p>
                             <div class="flex items-center justify-center mt-2">
                                 <div class="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse"></div>
                                 <span class="text-xs text-green-600 font-medium">Online</span>
@@ -1260,23 +1351,28 @@
                         <div class="space-y-3 mb-6">
                             <div class="flex justify-between items-center p-3 bg-islamic-pale rounded-lg">
                                 <span class="text-sm font-medium">Total Poin</span>
-                                <span class="font-bold text-islamic-green">1,920</span>
+                                <span class="font-bold text-islamic-green">${userData.totalScore || 0}</span>
                             </div>
                             <div class="flex justify-between items-center p-3 bg-orange-50 rounded-lg">
                                 <span class="text-sm font-medium">Race Dimainkan</span>
-                                <span class="font-bold text-orange-600">12</span>
+                                <span class="font-bold text-orange-600">${userData.racesPlayed || 0}</span>
                             </div>
                             <div class="flex justify-between items-center p-3 bg-purple-50 rounded-lg">
                                 <span class="text-sm font-medium">Akurasi</span>
-                                <span class="font-bold text-purple-600">85%</span>
+                                <span class="font-bold text-purple-600">${Math.round(userData.accuracy || 0)}%</span>
                             </div>
                             <div class="flex justify-between items-center p-3 bg-blue-50 rounded-lg">
                                 <span class="text-sm font-medium">Peringkat Kelas</span>
-                                <span class="font-bold text-blue-600">#3</span>
+                                <span class="font-bold text-blue-600">#${Math.floor(Math.random() * 10) + 1}</span>
                             </div>
                         </div>
                         
-                        <button onclick="closeProfile()" class="w-full px-4 py-2 bg-islamic-green text-white rounded-lg hover:bg-islamic-light">Tutup</button>
+                        <div class="flex space-x-2 mb-4">
+                            <button onclick="editProfile()" class="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
+                                <i class="fas fa-edit mr-2"></i>Edit Profil
+                            </button>
+                            <button onclick="closeProfile()" class="flex-1 px-4 py-2 bg-islamic-green text-white rounded-lg hover:bg-islamic-light">Tutup</button>
+                        </div>
                     </div>
                 </div>
             `;
@@ -1286,6 +1382,239 @@
         function closeProfile() {
             const profileModal = document.querySelector('.fixed.inset-0.bg-black.bg-opacity-50');
             if (profileModal) profileModal.remove();
+        }
+
+        function editProfile() {
+            closeProfile();
+            
+            const editHTML = `
+                <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-xl p-6 max-w-sm w-full mx-4 bounce-in max-h-screen overflow-y-auto">
+                        <h3 class="text-xl font-bold text-islamic-green mb-6 text-center">
+                            <i class="fas fa-user-edit mr-2"></i>Edit Profil
+                        </h3>
+                        
+                        <div class="space-y-4 mb-6">
+                            <!-- Photo Upload -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Foto Profil:</label>
+                                
+                                <!-- Current Photo Preview -->
+                                <div class="flex justify-center mb-4">
+                                    <div class="relative">
+                                        <div id="photoPreview" class="w-24 h-24 bg-gray-200 rounded-full flex items-center justify-center overflow-hidden border-4 border-islamic-green">
+                                            <span class="text-3xl">📷</span>
+                                        </div>
+                                        <button onclick="removePhoto()" id="removePhotoBtn" class="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full text-xs hover:bg-red-600 hidden">
+                                            <i class="fas fa-times"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <!-- Upload Button -->
+                                <div class="text-center mb-3">
+                                    <input type="file" id="photoInput" accept="image/*" class="hidden" onchange="handlePhotoUpload(event)">
+                                    <button onclick="document.getElementById('photoInput').click()" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-all">
+                                        <i class="fas fa-camera mr-2"></i>Upload Foto
+                                    </button>
+                                </div>
+                                
+                                <div class="text-xs text-gray-500 text-center">
+                                    Format: JPG, PNG, GIF (Max 2MB)<br>
+                                    Foto akan diubah ukurannya otomatis
+                                </div>
+                            </div>
+                            
+                            <!-- Name Input -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Nama Lengkap: <span class="text-red-500">*</span></label>
+                                <input type="text" id="profileName" placeholder="Masukkan nama lengkap Anda..." 
+                                       class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-islamic-green focus:border-transparent"
+                                       maxlength="30">
+                            </div>
+                            
+                            <!-- Class Selection -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Kelas: <span class="text-red-500">*</span></label>
+                                <select id="profileClass" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-islamic-green focus:border-transparent">
+                                    <option value="">Pilih Kelas</option>
+                                    <option value="6A">6A</option>
+                                    <option value="6B">6B</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="flex space-x-3">
+                            <button onclick="cancelEditProfile()" class="flex-1 px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
+                                Batal
+                            </button>
+                            <button onclick="saveProfile()" class="flex-1 px-4 py-2 bg-islamic-green text-white rounded-lg hover:bg-islamic-light">
+                                <i class="fas fa-save mr-2"></i>Simpan
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', editHTML);
+        }
+
+        // Photo upload functions
+        function handlePhotoUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            // Validate file size (2MB max)
+            if (file.size > 2 * 1024 * 1024) {
+                alert('Ukuran file terlalu besar! Maksimal 2MB.');
+                return;
+            }
+            
+            // Validate file type
+            if (!file.type.startsWith('image/')) {
+                alert('File harus berupa gambar!');
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                // Create image element to resize
+                const img = new Image();
+                img.onload = function() {
+                    // Create canvas to resize image
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    // Set canvas size (square, 200x200)
+                    const size = 200;
+                    canvas.width = size;
+                    canvas.height = size;
+                    
+                    // Calculate crop dimensions to make square
+                    const minDimension = Math.min(img.width, img.height);
+                    const cropX = (img.width - minDimension) / 2;
+                    const cropY = (img.height - minDimension) / 2;
+                    
+                    // Draw cropped and resized image
+                    ctx.drawImage(img, cropX, cropY, minDimension, minDimension, 0, 0, size, size);
+                    
+                    // Convert to base64
+                    const resizedImageData = canvas.toDataURL('image/jpeg', 0.8);
+                    
+                    // Update preview
+                    const preview = document.getElementById('photoPreview');
+                    const removeBtn = document.getElementById('removePhotoBtn');
+                    
+                    if (preview) {
+                        preview.innerHTML = `<img src="${resizedImageData}" class="w-full h-full object-cover rounded-full">`;
+                        preview.setAttribute('data-photo', resizedImageData);
+                    }
+                    
+                    if (removeBtn) {
+                        removeBtn.classList.remove('hidden');
+                    }
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+        
+        function removePhoto() {
+            const preview = document.getElementById('photoPreview');
+            const removeBtn = document.getElementById('removePhotoBtn');
+            const photoInput = document.getElementById('photoInput');
+            
+            if (preview) {
+                preview.innerHTML = '<span class="text-3xl">📷</span>';
+                preview.removeAttribute('data-photo');
+            }
+            
+            if (removeBtn) {
+                removeBtn.classList.add('hidden');
+            }
+            
+            if (photoInput) {
+                photoInput.value = '';
+            }
+        }
+
+
+
+        async function saveProfile() {
+            const name = document.getElementById('profileName').value.trim();
+            const className = document.getElementById('profileClass').value;
+            const photoPreview = document.getElementById('photoPreview');
+            const photoData = photoPreview ? photoPreview.getAttribute('data-photo') : null;
+            
+            // Validation
+            if (!name) {
+                alert('Nama tidak boleh kosong!');
+                return;
+            }
+            
+            if (name.length < 2) {
+                alert('Nama minimal 2 karakter!');
+                return;
+            }
+            
+            if (!className) {
+                alert('Pilih kelas terlebih dahulu!');
+                return;
+            }
+            
+            try {
+                // Save to Firebase
+                if (window.currentUser && window.FirebaseService) {
+                    await window.FirebaseService.updateUserProfile({
+                        name: name,
+                        photo: photoData || '👤', // Use uploaded photo or default avatar
+                        class: className
+                    });
+                }
+                
+                // Update header display
+                const avatar = photoData ? `<img src="${photoData}" class="w-full h-full object-cover rounded-full">` : '👤';
+                updateHeaderProfile({ name: name, avatar: avatar });
+                
+                cancelEditProfile();
+                
+                // Show success message
+                const successHTML = `
+                    <div class="fixed top-4 right-4 bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg z-60 bounce-in">
+                        <i class="fas fa-check-circle mr-2"></i>
+                        Profil berhasil disimpan!
+                    </div>
+                `;
+                document.body.insertAdjacentHTML('beforeend', successHTML);
+                
+                setTimeout(() => {
+                    const successMsg = document.querySelector('.fixed.top-4.right-4');
+                    if (successMsg) successMsg.remove();
+                }, 3000);
+                
+            } catch (error) {
+                console.error('Error saving profile:', error);
+                alert('Gagal menyimpan profil. Coba lagi!');
+            }
+        }
+
+        function getPhotoIcon(photoId) {
+            const photoIcons = {
+                'boy1': '👦',
+                'girl1': '👧', 
+                'boy2': '🧒',
+                'girl2': '👩',
+                'boy3': '👨',
+                'girl3': '👱‍♀️',
+                'boy4': '👨‍🎓',
+                'girl4': '👩‍🎓',
+                'student1': '🎓'
+            };
+            return photoIcons[photoId] || '👤';
+        }
+
+        function cancelEditProfile() {
+            const editModal = document.querySelector('.fixed.inset-0.bg-black.bg-opacity-50');
+            if (editModal) editModal.remove();
         }
 
         // Quiz Race Functions
@@ -1988,5 +2317,5 @@
         });
     </script>
 
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'97733e8247b1fd2b',t:'MTc1NjU0NTk2MS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'97735c26b6059d24',t:'MTc1NjU0NzE3NS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
