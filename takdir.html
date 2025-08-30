@@ -1,0 +1,1992 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Beriman kepada Qadha dan Qadar</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, limit, serverTimestamp, doc, setDoc, getDoc, updateDoc, deleteDoc } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+        import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+
+        // ✅ KONFIGURASI FIREBASE ANDA
+        const firebaseConfig = {
+            apiKey: "AIzaSyBhWK2ev0KUGZ3xORv7M3tsQxivjFoZsTw",
+            authDomain: "new-mpi-90fb2.firebaseapp.com",
+            projectId: "new-mpi-90fb2",
+            storageBucket: "new-mpi-90fb2.firebasestorage.app",
+            messagingSenderId: "351432907492",
+            appId: "1:351432907492:web:88ee8464f4c0b49d866af1"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        // Global variables
+        window.db = db;
+        window.auth = auth;
+        window.currentUser = null;
+        window.currentRaceId = null;
+
+        // Authentication
+        signInAnonymously(auth).then(() => {
+            console.log('✅ Firebase connected successfully');
+        }).catch((error) => {
+            console.error('❌ Firebase connection failed:', error);
+            alert('Koneksi Firebase gagal. Periksa konfigurasi Anda.');
+        });
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                window.currentUser = user;
+                initializeUserProfile();
+            }
+        });
+
+        // Initialize user profile
+        async function initializeUserProfile() {
+            const userRef = doc(db, 'users', currentUser.uid);
+            const userSnap = await getDoc(userRef);
+            
+            if (!userSnap.exists()) {
+                await setDoc(userRef, {
+                    name: 'Ahmad',
+                    totalScore: 0,
+                    racesPlayed: 0,
+                    accuracy: 0,
+                    lastActive: serverTimestamp(),
+                    isOnline: true
+                });
+            } else {
+                await updateDoc(userRef, {
+                    lastActive: serverTimestamp(),
+                    isOnline: true
+                });
+            }
+        }
+
+        // Export functions to global scope
+        window.FirebaseService = {
+            // Real-time chat functions
+            sendChatMessage: async (message) => {
+                try {
+                    await addDoc(collection(db, 'chatMessages'), {
+                        text: message,
+                        userId: currentUser.uid,
+                        userName: 'Ahmad',
+                        timestamp: serverTimestamp()
+                    });
+                } catch (error) {
+                    console.error('Error sending message:', error);
+                }
+            },
+
+            listenToChatMessages: (callback) => {
+                const q = query(
+                    collection(db, 'chatMessages'), 
+                    orderBy('timestamp', 'desc'), 
+                    limit(50)
+                );
+                
+                return onSnapshot(q, (snapshot) => {
+                    const messages = [];
+                    snapshot.forEach((doc) => {
+                        messages.unshift({ id: doc.id, ...doc.data() });
+                    });
+                    callback(messages);
+                });
+            },
+
+            // Race functions
+            createRace: async (raceData) => {
+                try {
+                    const raceRef = await addDoc(collection(db, 'races'), {
+                        ...raceData,
+                        createdAt: serverTimestamp(),
+                        status: 'waiting', // waiting, active, finished
+                        players: {},
+                        currentQuestion: 0
+                    });
+                    window.currentRaceId = raceRef.id;
+                    return raceRef.id;
+                } catch (error) {
+                    console.error('Error creating race:', error);
+                    return null;
+                }
+            },
+
+            joinRace: async (raceId) => {
+                try {
+                    const raceRef = doc(db, 'races', raceId);
+                    const raceSnap = await getDoc(raceRef);
+                    
+                    if (raceSnap.exists()) {
+                        const raceData = raceSnap.data();
+                        const players = raceData.players || {};
+                        
+                        players[currentUser.uid] = {
+                            name: 'Ahmad',
+                            score: 0,
+                            position: 0,
+                            answers: [],
+                            joinedAt: serverTimestamp()
+                        };
+
+                        await updateDoc(raceRef, { players });
+                        window.currentRaceId = raceId;
+                        return true;
+                    }
+                    return false;
+                } catch (error) {
+                    console.error('Error joining race:', error);
+                    return false;
+                }
+            },
+
+            listenToRace: (raceId, callback) => {
+                const raceRef = doc(db, 'races', raceId);
+                return onSnapshot(raceRef, (doc) => {
+                    if (doc.exists()) {
+                        callback({ id: doc.id, ...doc.data() });
+                    }
+                });
+            },
+
+            submitRaceAnswer: async (raceId, questionIndex, answer, isCorrect, score) => {
+                try {
+                    const raceRef = doc(db, 'races', raceId);
+                    const raceSnap = await getDoc(raceRef);
+                    
+                    if (raceSnap.exists()) {
+                        const raceData = raceSnap.data();
+                        const players = raceData.players || {};
+                        
+                        if (players[currentUser.uid]) {
+                            players[currentUser.uid].answers[questionIndex] = {
+                                answer,
+                                isCorrect,
+                                timestamp: serverTimestamp()
+                            };
+                            players[currentUser.uid].score = score;
+                            players[currentUser.uid].position = Math.min(95, players[currentUser.uid].position + (isCorrect ? Math.random() * 15 + 10 : -Math.random() * 5));
+                        }
+
+                        await updateDoc(raceRef, { players });
+                    }
+                } catch (error) {
+                    console.error('Error submitting answer:', error);
+                }
+            },
+
+            // Leaderboard functions
+            updateUserStats: async (score, accuracy) => {
+                try {
+                    const userRef = doc(db, 'users', currentUser.uid);
+                    const userSnap = await getDoc(userRef);
+                    
+                    if (userSnap.exists()) {
+                        const userData = userSnap.data();
+                        await updateDoc(userRef, {
+                            totalScore: (userData.totalScore || 0) + score,
+                            racesPlayed: (userData.racesPlayed || 0) + 1,
+                            accuracy: accuracy,
+                            lastActive: serverTimestamp()
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error updating stats:', error);
+                }
+            },
+
+            getLeaderboard: async () => {
+                try {
+                    const q = query(
+                        collection(db, 'users'), 
+                        orderBy('totalScore', 'desc'), 
+                        limit(10)
+                    );
+                    
+                    const snapshot = await getDocs(q);
+                    const leaderboard = [];
+                    snapshot.forEach((doc) => {
+                        leaderboard.push({ id: doc.id, ...doc.data() });
+                    });
+                    return leaderboard;
+                } catch (error) {
+                    console.error('Error getting leaderboard:', error);
+                    return [];
+                }
+            },
+
+            // Online users functions
+            listenToOnlineUsers: (callback) => {
+                const q = query(
+                    collection(db, 'users'),
+                    orderBy('lastActive', 'desc'),
+                    limit(20)
+                );
+                
+                return onSnapshot(q, (snapshot) => {
+                    const users = [];
+                    snapshot.forEach((doc) => {
+                        const userData = doc.data();
+                        const lastActive = userData.lastActive?.toDate();
+                        const isOnline = lastActive && (Date.now() - lastActive.getTime()) < 300000; // 5 minutes
+                        
+                        if (isOnline) {
+                            users.push({ id: doc.id, ...userData });
+                        }
+                    });
+                    callback(users);
+                });
+            },
+
+            // Cleanup on page unload
+            setUserOffline: async () => {
+                if (currentUser) {
+                    try {
+                        const userRef = doc(db, 'users', currentUser.uid);
+                        await updateDoc(userRef, {
+                            isOnline: false,
+                            lastActive: serverTimestamp()
+                        });
+                    } catch (error) {
+                        console.error('Error setting user offline:', error);
+                    }
+                }
+            }
+        };
+
+        // Set user offline when page is closed
+        window.addEventListener('beforeunload', () => {
+            window.FirebaseService.setUserOffline();
+        });
+    </script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'islamic-green': '#0D8E4B',
+                        'islamic-light': '#1AB96D',
+                        'islamic-pale': '#E8F9F1',
+                        'islamic-bg': '#F8FDFA',
+                        'islamic-accent': '#FF9F43',
+                        'islamic-gold': '#FFD700'
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        .islamic-pattern {
+            background-image: 
+                radial-gradient(circle at 25% 25%, rgba(13, 142, 75, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 75% 75%, rgba(26, 185, 109, 0.1) 0%, transparent 50%);
+        }
+        
+        .body-pattern {
+            background-image: 
+                radial-gradient(circle at 20% 80%, rgba(13, 142, 75, 0.05) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(26, 185, 109, 0.05) 0%, transparent 50%);
+        }
+        
+        .card-hover {
+            transition: all 0.3s ease;
+        }
+        
+        .card-hover:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(13, 142, 75, 0.15);
+        }
+        
+        .menu-card:active {
+            transform: scale(0.95);
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .race-pulse {
+            animation: racePulse 2s infinite;
+        }
+
+        @keyframes racePulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        .online-indicator {
+            animation: onlineBlink 2s infinite;
+        }
+
+        @keyframes onlineBlink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.3; }
+        }
+
+        .car-move {
+            transition: left 1s ease-out;
+        }
+
+        .bounce-in {
+            animation: bounceIn 0.6s ease-out;
+        }
+
+        @keyframes bounceIn {
+            0% { transform: scale(0.3); opacity: 0; }
+            50% { transform: scale(1.05); }
+            70% { transform: scale(0.9); }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        .firebase-status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .firebase-connected {
+            background: #10B981;
+            color: white;
+        }
+
+        .firebase-disconnected {
+            background: #EF4444;
+            color: white;
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-islamic-light via-islamic-pale to-islamic-bg min-h-screen body-pattern pb-20">
+
+    <!-- Firebase Status Indicator -->
+    <div id="firebaseStatus" class="firebase-status firebase-disconnected">
+        <i class="fas fa-circle mr-1"></i>
+        Connecting...
+    </div>
+
+    <!-- Header -->
+    <header class="bg-gradient-to-r from-islamic-green via-islamic-light to-islamic-green shadow-lg sticky top-0 z-40">
+        <div class="flex items-center justify-between px-4 py-4">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 bg-white rounded-full flex items-center justify-center shadow-md">
+                    <span class="text-xl">🤲</span>
+                </div>
+                <div>
+                  <p class="text-xs text-white opacity-95">Emes Learning Media</p>
+                    <h1 class="text-lg font-bold text-white drop-shadow-sm">Akidah Akhlak Kelas 6 MI</h1>
+                    <p class="text-xs text-white opacity-95">Beriman kepada Qadha dan Qadar</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-2" onclick="showProfile()">
+                <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center shadow-md cursor-pointer">
+                    <span class="text-lg">👤</span>
+                </div>
+                <div class="text-white text-xs">
+                    <div class="font-semibold">Ahmad</div>
+                    <div class="opacity-75 flex items-center">
+                        <div class="w-2 h-2 bg-green-400 rounded-full mr-1 online-indicator"></div>
+                        <span id="connectionStatus">Online</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="p-4">
+        
+        <!-- Home Page -->
+        <div id="homePage" class="fade-in">
+            <!-- Welcome Card -->
+            <div class="bg-white bg-opacity-95 backdrop-blur-sm rounded-2xl p-6 shadow-lg mb-6 islamic-pattern">
+                <div class="text-center">
+                    <div class="w-16 h-16 bg-islamic-green rounded-full flex items-center justify-center mx-auto mb-4">
+                        <span class="text-2xl">🤲</span>
+                    </div>
+                    <h2 class="text-xl font-bold text-gray-800 mb-2">Beriman kepada Qadha dan Qadar</h2>
+                    <p class="text-sm text-gray-600">Pelajari rukun iman yang keenam dengan cara yang menyenangkan</p>
+                </div>
+            </div>
+
+            <!-- Main Menu Cards -->
+            <div class="grid grid-cols-2 gap-4">
+                <!-- Materi Card -->
+                <div class="bg-gradient-to-br from-islamic-green to-islamic-light rounded-2xl p-6 shadow-lg card-hover menu-card cursor-pointer" onclick="showPage('materiPage')">
+                    <div class="text-center text-white">
+                        <div class="w-12 h-12 bg-white bg-opacity-20 rounded-full flex items-center justify-center mx-auto mb-3">
+                            <i class="fas fa-book text-xl"></i>
+                        </div>
+                        <h3 class="font-bold text-lg mb-1">Materi</h3>
+                        <p class="text-xs opacity-90">Pelajari konsep dasar</p>
+                        <div class="mt-3 bg-white bg-opacity-20 rounded-full px-3 py-1">
+                            <span class="text-xs">3 Topik</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Game Card -->
+                <div class="bg-gradient-to-br from-islamic-accent to-orange-500 rounded-2xl p-6 shadow-lg card-hover menu-card cursor-pointer race-pulse" onclick="showPage('gamePage')">
+                    <div class="text-center text-white">
+                        <div class="w-12 h-12 bg-white bg-opacity-20 rounded-full flex items-center justify-center mx-auto mb-3 relative">
+                            <i class="fas fa-gamepad text-xl"></i>
+                            <div class="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center animate-pulse">
+                                <span class="text-xs">🔥</span>
+                            </div>
+                        </div>
+                        <h3 class="font-bold text-lg mb-1">Quiz Race</h3>
+                        <p class="text-xs opacity-90">Realtime multiplayer!</p>
+                        <div class="mt-3 bg-white bg-opacity-20 rounded-full px-3 py-1">
+                            <span class="text-xs" id="onlineCount">Connecting...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Evaluasi Card -->
+                <div class="bg-gradient-to-br from-purple-500 to-purple-700 rounded-2xl p-6 shadow-lg card-hover menu-card cursor-pointer" onclick="showPage('evaluasiPage')">
+                    <div class="text-center text-white">
+                        <div class="w-12 h-12 bg-white bg-opacity-20 rounded-full flex items-center justify-center mx-auto mb-3">
+                            <i class="fas fa-clipboard-check text-xl"></i>
+                        </div>
+                        <h3 class="font-bold text-lg mb-1">Evaluasi</h3>
+                        <p class="text-xs opacity-90">Uji pemahaman</p>
+                        <div class="mt-3 bg-white bg-opacity-20 rounded-full px-3 py-1">
+                            <span class="text-xs">10 Soal</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Diskusi Card -->
+                <div class="bg-gradient-to-br from-blue-500 to-blue-700 rounded-2xl p-6 shadow-lg card-hover menu-card cursor-pointer" onclick="showPage('diskusiPage')">
+                    <div class="text-center text-white">
+                        <div class="w-12 h-12 bg-white bg-opacity-20 rounded-full flex items-center justify-center mx-auto mb-3 relative">
+                            <i class="fas fa-comments text-xl"></i>
+                            <div class="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
+                                <span class="text-xs" id="unreadMessages">0</span>
+                            </div>
+                        </div>
+                        <h3 class="font-bold text-lg mb-1">Diskusi</h3>
+                        <p class="text-xs opacity-90">Chat dengan teman</p>
+                        <div class="mt-3 bg-white bg-opacity-20 rounded-full px-3 py-1">
+                            <span class="text-xs">Live Chat</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Materi Page -->
+        <div id="materiPage" class="hidden fade-in">
+            <div class="bg-white bg-opacity-95 backdrop-blur-sm rounded-2xl p-6 shadow-lg mb-4">
+                <h2 class="text-xl font-bold text-islamic-green mb-4 flex items-center">
+                    <i class="fas fa-book mr-3"></i>
+                    Materi Pembelajaran
+                </h2>
+                
+                <div class="space-y-4">
+                    <div class="p-4 bg-islamic-pale rounded-xl cursor-pointer hover:bg-opacity-80 transition-all menu-card" onclick="openMateri(1)">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center space-x-3">
+                                <div class="w-10 h-10 bg-islamic-green rounded-full flex items-center justify-center">
+                                    <span class="text-white font-bold">1</span>
+                                </div>
+                                <div>
+                                    <h3 class="font-semibold text-gray-800">Pengertian Qadha dan Qadar</h3>
+                                    <p class="text-sm text-gray-600">Memahami definisi dan perbedaan</p>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-xs text-gray-500">10 menit</div>
+                                <div class="w-6 h-6 bg-islamic-green rounded-full flex items-center justify-center mt-1">
+                                    <i class="fas fa-play text-white text-xs"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="p-4 bg-islamic-pale rounded-xl cursor-pointer hover:bg-opacity-80 transition-all menu-card" onclick="openMateri(2)">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center space-x-3">
+                                <div class="w-10 h-10 bg-islamic-green rounded-full flex items-center justify-center">
+                                    <span class="text-white font-bold">2</span>
+                                </div>
+                                <div>
+                                    <h3 class="font-semibold text-gray-800">Dalil Al-Quran dan Hadits</h3>
+                                    <p class="text-sm text-gray-600">Ayat dan hadits tentang takdir</p>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-xs text-gray-500">12 menit</div>
+                                <div class="w-6 h-6 bg-islamic-green rounded-full flex items-center justify-center mt-1">
+                                    <i class="fas fa-play text-white text-xs"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="p-4 bg-islamic-pale rounded-xl cursor-pointer hover:bg-opacity-80 transition-all menu-card" onclick="openMateri(3)">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center space-x-3">
+                                <div class="w-10 h-10 bg-islamic-green rounded-full flex items-center justify-center">
+                                    <span class="text-white font-bold">3</span>
+                                </div>
+                                <div>
+                                    <h3 class="font-semibold text-gray-800">Hikmah Beriman kepada Qadha dan Qadar</h3>
+                                    <p class="text-sm text-gray-600">Manfaat beriman kepada takdir</p>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-xs text-gray-500">15 menit</div>
+                                <div class="w-6 h-6 bg-islamic-green rounded-full flex items-center justify-center mt-1">
+                                    <i class="fas fa-play text-white text-xs"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Game Page -->
+        <div id="gamePage" class="hidden fade-in">
+            <!-- Quiz Race Header -->
+            <div class="bg-gradient-to-r from-red-500 via-orange-500 to-yellow-500 rounded-2xl p-6 shadow-lg mb-4 text-white">
+                <div class="text-center">
+                    <div class="w-16 h-16 bg-white bg-opacity-20 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <i class="fas fa-trophy text-3xl"></i>
+                    </div>
+                    <h2 class="text-2xl font-bold mb-2">🏁 Quiz Race Realtime</h2>
+                    <p class="text-sm opacity-90">Berlomba menjawab soal dengan teman sekelas secara langsung!</p>
+                </div>
+            </div>
+
+            <!-- Live Race Status -->
+            <div class="bg-white bg-opacity-95 backdrop-blur-sm rounded-2xl p-4 shadow-lg mb-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="font-bold text-gray-800 flex items-center">
+                        <div class="w-3 h-3 bg-red-500 rounded-full animate-pulse mr-2"></div>
+                        🔥 Race Aktif Sekarang
+                    </h3>
+                    <div class="flex items-center space-x-2">
+                        <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                        <span class="text-xs text-green-600 font-medium">LIVE</span>
+                    </div>
+                </div>
+                
+                <div class="bg-gradient-to-r from-purple-100 to-pink-100 rounded-xl p-4 mb-3">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h4 class="font-semibold text-purple-800">Qadha vs Qadar Challenge</h4>
+                            <p class="text-sm text-purple-600">10 soal acak • 30 detik per soal</p>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-lg font-bold text-purple-800" id="livePlayerCount">0/12</div>
+                            <div class="text-xs text-purple-600">pemain</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Real-time Player List -->
+                <div class="bg-gray-50 rounded-xl p-3 mb-3">
+                    <div class="text-xs font-semibold text-gray-600 mb-2">Pemain Online:</div>
+                    <div class="flex flex-wrap gap-2" id="onlinePlayersList">
+                        <div class="text-xs text-gray-500">Loading...</div>
+                    </div>
+                </div>
+                
+                <button onclick="joinRace()" class="w-full bg-gradient-to-r from-green-500 to-green-600 text-white py-3 rounded-xl font-bold hover:from-green-600 hover:to-green-700 transition-all">
+                    <i class="fas fa-rocket mr-2"></i>
+                    Gabung Race Sekarang!
+                </button>
+            </div>
+
+            <!-- Leaderboard -->
+            <div class="bg-white bg-opacity-95 backdrop-blur-sm rounded-2xl p-4 shadow-lg mb-4">
+                <h3 class="font-bold text-gray-800 mb-3 flex items-center">
+                    <i class="fas fa-medal text-yellow-500 mr-2"></i>
+                    Leaderboard Hari Ini
+                </h3>
+                
+                <div id="leaderboardList" class="space-y-2">
+                    <div class="text-center text-gray-500 text-sm">Loading leaderboard...</div>
+                </div>
+            </div>
+
+            <!-- Create New Race -->
+            <div class="bg-white bg-opacity-95 backdrop-blur-sm rounded-2xl p-4 shadow-lg">
+                <h3 class="font-bold text-gray-800 mb-3 flex items-center">
+                    <i class="fas fa-plus-circle text-islamic-accent mr-2"></i>
+                    Buat Race Baru
+                </h3>
+                
+                <div class="grid grid-cols-2 gap-3 mb-4">
+                    <div class="p-3 bg-blue-50 rounded-lg text-center cursor-pointer hover:bg-blue-100 transition-all" onclick="createQuickRace()">
+                        <i class="fas fa-bolt text-blue-500 text-xl mb-2"></i>
+                        <div class="font-semibold text-blue-800 text-sm">Quick Race</div>
+                        <div class="text-xs text-blue-600">10 soal • 2-8 pemain</div>
+                    </div>
+                    
+                    <div class="p-3 bg-purple-50 rounded-lg text-center cursor-pointer hover:bg-purple-100 transition-all" onclick="showPracticeMode()">
+                        <i class="fas fa-dumbbell text-purple-500 text-xl mb-2"></i>
+                        <div class="font-semibold text-purple-800 text-sm">Mode Latihan</div>
+                        <div class="text-xs text-purple-600">5 soal • Solo</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Evaluasi Page -->
+        <div id="evaluasiPage" class="hidden fade-in">
+            <div class="bg-white bg-opacity-95 backdrop-blur-sm rounded-2xl p-6 shadow-lg mb-4">
+                <h2 class="text-xl font-bold text-purple-600 mb-4 flex items-center">
+                    <i class="fas fa-clipboard-check mr-3"></i>
+                    Evaluasi Pembelajaran
+                </h2>
+                
+                <div class="bg-purple-50 rounded-xl p-4 mb-4">
+                    <h3 class="font-semibold text-purple-800 mb-2">Tes Pemahaman Qadha dan Qadar</h3>
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div class="flex items-center space-x-2">
+                            <i class="fas fa-clock text-purple-600"></i>
+                            <span>Waktu: 20 menit</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <i class="fas fa-question-circle text-purple-600"></i>
+                            <span>10 Soal Acak</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <i class="fas fa-star text-purple-600"></i>
+                            <span>Nilai minimal: 70</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <i class="fas fa-redo text-purple-600"></i>
+                            <span>3x percobaan</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <button onclick="startEvaluasi()" class="w-full bg-gradient-to-r from-purple-500 to-purple-700 text-white py-4 rounded-xl font-semibold hover:from-purple-600 hover:to-purple-800 transition-all">
+                    <i class="fas fa-play mr-2"></i>
+                    Mulai Evaluasi
+                </button>
+                
+                <!-- Previous Results -->
+                <div class="mt-6">
+                    <h4 class="font-semibold text-gray-800 mb-3">Hasil Sebelumnya</h4>
+                    <div class="space-y-2">
+                        <div class="flex items-center justify-between p-3 bg-green-50 rounded-lg">
+                            <div>
+                                <span class="text-sm font-medium">Percobaan 1</span>
+                                <p class="text-xs text-gray-600">2 hari yang lalu</p>
+                            </div>
+                            <div class="text-right">
+                                <span class="text-lg font-bold text-green-600">85</span>
+                                <p class="text-xs text-gray-600">Lulus</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Diskusi Page -->
+        <div id="diskusiPage" class="hidden fade-in">
+            <div class="bg-white bg-opacity-95 backdrop-blur-sm rounded-2xl shadow-lg overflow-hidden">
+                <!-- Chat Header -->
+                <div class="bg-gradient-to-r from-blue-500 to-blue-700 p-4">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-10 h-10 bg-white bg-opacity-20 rounded-full flex items-center justify-center">
+                                <i class="fas fa-users text-white"></i>
+                            </div>
+                            <div>
+                                <h2 class="font-semibold text-white">Ruang Diskusi Kelas</h2>
+                                <div class="flex items-center space-x-2">
+                                    <div class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                                    <span class="text-sm text-blue-100" id="chatOnlineCount">Loading...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Chat Messages -->
+                <div id="chatArea" class="h-64 overflow-y-auto p-4 space-y-3 bg-gradient-to-b from-blue-50 to-white">
+                    <div class="text-center text-gray-500 text-sm">
+                        Loading chat messages...
+                    </div>
+                </div>
+                
+                <!-- Chat Input -->
+                <div class="border-t border-gray-200 p-4">
+                    <div class="flex space-x-3 mb-3">
+                        <input type="text" id="chatInput" placeholder="Ketik pesan Anda..." 
+                            class="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            onkeypress="handleEnter(event)">
+                        <button onclick="sendMessage()" class="bg-blue-500 text-white p-3 rounded-lg hover:bg-blue-600 transition-all">
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </div>
+                    
+                    <!-- Quick Messages -->
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="sendQuickMessage('Assalamu\'alaikum semua 👋')" class="text-xs bg-blue-50 text-blue-600 px-3 py-1 rounded-full hover:bg-blue-100 transition-all">
+                            Salam
+                        </button>
+                        <button onclick="sendQuickMessage('Ada yang bisa bantu soal ini?')" class="text-xs bg-blue-50 text-blue-600 px-3 py-1 rounded-full hover:bg-blue-100 transition-all">
+                            Minta Bantuan
+                        </button>
+                        <button onclick="sendQuickMessage('Alhamdulillah, materi ini mudah dipahami 📚')" class="text-xs bg-blue-50 text-blue-600 px-3 py-1 rounded-full hover:bg-blue-100 transition-all">
+                            Apresiasi
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Bottom Navigation -->
+    <nav class="fixed bottom-0 left-0 right-0 bg-white shadow-lg border-t border-gray-200 z-50">
+        <div class="flex justify-around py-2">
+            <button onclick="showPage('homePage')" class="nav-btn flex flex-col items-center py-2 px-4 text-islamic-green" data-page="homePage">
+                <i class="fas fa-home text-xl mb-1"></i>
+                <span class="text-xs font-medium">Beranda</span>
+            </button>
+            <button onclick="showPage('materiPage')" class="nav-btn flex flex-col items-center py-2 px-4 text-gray-500" data-page="materiPage">
+                <i class="fas fa-book text-xl mb-1"></i>
+                <span class="text-xs font-medium">Materi</span>
+            </button>
+            <button onclick="showPage('gamePage')" class="nav-btn flex flex-col items-center py-2 px-4 text-gray-500 relative" data-page="gamePage">
+                <i class="fas fa-gamepad text-xl mb-1"></i>
+                <span class="text-xs font-medium">Race</span>
+                <div class="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center animate-pulse">
+                    <span class="text-xs text-white">🔥</span>
+                </div>
+            </button>
+            <button onclick="showPage('evaluasiPage')" class="nav-btn flex flex-col items-center py-2 px-4 text-gray-500" data-page="evaluasiPage">
+                <i class="fas fa-clipboard-check text-xl mb-1"></i>
+                <span class="text-xs font-medium">Evaluasi</span>
+            </button>
+            <button onclick="showPage('diskusiPage')" class="nav-btn flex flex-col items-center py-2 px-4 text-gray-500 relative" data-page="diskusiPage">
+                <i class="fas fa-comments text-xl mb-1"></i>
+                <span class="text-xs font-medium">Diskusi</span>
+                <div class="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
+                    <span class="text-xs text-white" id="unreadBadge">0</span>
+                </div>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Modal untuk Materi -->
+    <div id="materiModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl p-6 max-w-2xl w-full mx-4 max-h-96 overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h3 id="materiTitle" class="text-xl font-bold text-islamic-green"></h3>
+                <button onclick="closeMateri()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            <div id="materiContent" class="text-gray-700 leading-relaxed">
+                <!-- Content will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Data Materi
+        const materiData = {
+            1: {
+                title: "Pengertian Qadha dan Qadar",
+                content: `
+                    <h4 class="font-semibold text-islamic-green mb-3">Pengertian Qadha dan Qadar</h4>
+                    
+                    <div class="space-y-4">
+                        <div class="bg-green-50 p-4 rounded-lg">
+                            <h5 class="font-semibold mb-2">🤲 Qadha (القضاء)</h5>
+                            <p>Qadha berarti <strong>ketetapan Allah</strong> yang telah ditetapkan sejak azali (sebelum alam semesta diciptakan).</p>
+                        </div>
+                        
+                        <div class="bg-blue-50 p-4 rounded-lg">
+                            <h5 class="font-semibold mb-2">⚖️ Qadar (القدر)</h5>
+                            <p>Qadar berarti <strong>pelaksanaan</strong> dari ketetapan Allah di dunia nyata.</p>
+                        </div>
+                        
+                        <div class="bg-yellow-50 p-4 rounded-lg">
+                            <h5 class="font-semibold mb-2">🔍 Perbedaan Qadha dan Qadar</h5>
+                            <ul class="list-disc list-inside space-y-1">
+                                <li><strong>Qadha:</strong> Ketetapan sejak azali, tidak berubah</li>
+                                <li><strong>Qadar:</strong> Pelaksanaan di dunia, terjadi sesuai waktu</li>
+                            </ul>
+                        </div>
+                    </div>
+                `
+            },
+            2: {
+                title: "Dalil Al-Quran dan Hadits",
+                content: `
+                    <h4 class="font-semibold text-islamic-green mb-3">Dalil Al-Quran dan Hadits</h4>
+                    
+                    <div class="space-y-4">
+                        <div class="bg-green-50 p-4 rounded-lg">
+                            <h5 class="font-semibold mb-2">📖 Dalil Al-Quran</h5>
+                            <div class="bg-white p-3 rounded border-l-4 border-islamic-green">
+                                <p class="text-lg text-right mb-2">وَكُلُّ شَيْءٍ عِندَهُ بِمِقْدَارٍ</p>
+                                <p class="text-sm italic">"Dan segala sesuatu pada sisi-Nya ada ukurannya (kadarnya)."</p>
+                                <p class="text-xs text-gray-600 mt-1">QS. Ar-Ra'd: 8</p>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-blue-50 p-4 rounded-lg">
+                            <h5 class="font-semibold mb-2">📚 Dalil Hadits</h5>
+                            <div class="bg-white p-3 rounded border-l-4 border-blue-500">
+                                <p class="text-sm mb-2">"Sesungguhnya Allah telah menetapkan takdir makhluk-Nya lima puluh ribu tahun sebelum Dia menciptakan langit dan bumi."</p>
+                                <p class="text-xs text-gray-600">HR. Muslim</p>
+                            </div>
+                        </div>
+                    </div>
+                `
+            },
+            3: {
+                title: "Hikmah Beriman kepada Qadha dan Qadar",
+                content: `
+                    <h4 class="font-semibold text-islamic-green mb-3">Hikmah Beriman kepada Qadha dan Qadar</h4>
+                    
+                    <div class="space-y-4">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="bg-green-50 p-3 rounded">
+                                <h6 class="font-semibold text-islamic-green mb-2">😌 Ketenangan Hati</h6>
+                                <p class="text-sm">Hati menjadi tenang karena yakin semua sudah diatur Allah dengan baik.</p>
+                            </div>
+                            
+                            <div class="bg-blue-50 p-3 rounded">
+                                <h6 class="font-semibold text-islamic-green mb-2">💪 Tidak Mudah Putus Asa</h6>
+                                <p class="text-sm">Saat menghadapi kesulitan, kita yakin ada hikmah di baliknya.</p>
+                            </div>
+                            
+                            <div class="bg-yellow-50 p-3 rounded">
+                                <h6 class="font-semibold text-islamic-green mb-2">🙏 Tidak Sombong</h6>
+                                <p class="text-sm">Saat berhasil, kita ingat semua adalah karunia Allah.</p>
+                            </div>
+                            
+                            <div class="bg-purple-50 p-3 rounded">
+                                <h6 class="font-semibold text-islamic-green mb-2">⚖️ Seimbang dalam Berusaha</h6>
+                                <p class="text-sm">Tetap berusaha maksimal sambil bertawakal kepada Allah.</p>
+                            </div>
+                        </div>
+                    </div>
+                `
+            }
+        };
+
+        // Complete Quiz Data Pool for Racing (15 questions)
+        const quizDataPool = [
+            {
+                question: "Apa arti Qadha dalam bahasa Arab?",
+                options: ["Ketetapan Allah sejak azali", "Pelaksanaan takdir", "Kehendak manusia", "Usaha maksimal"],
+                correct: 0
+            },
+            {
+                question: "Apa arti Qadar dalam bahasa Arab?",
+                options: ["Ketetapan Allah", "Pelaksanaan ketetapan Allah", "Doa kepada Allah", "Ibadah kepada Allah"],
+                correct: 1
+            },
+            {
+                question: "Beriman kepada Qadha dan Qadar termasuk rukun iman ke...",
+                options: ["Kelima", "Keenam", "Keempat", "Ketiga"],
+                correct: 1
+            },
+            {
+                question: "Sikap yang tepat saat mendapat musibah adalah...",
+                options: ["Marah kepada Allah", "Putus asa", "Sabar dan berdoa", "Menyalahkan orang lain"],
+                correct: 2
+            },
+            {
+                question: "Ayat Al-Quran yang menyebutkan tentang takdir adalah...",
+                options: ["QS. Al-Fatihah: 1", "QS. Ar-Ra'd: 8", "QS. Al-Baqarah: 2", "QS. An-Nas: 6"],
+                correct: 1
+            },
+            {
+                question: "Hikmah beriman kepada Qadha dan Qadar adalah...",
+                options: ["Menjadi sombong", "Hati menjadi tenang", "Malas berusaha", "Tidak peduli masa depan"],
+                correct: 1
+            },
+            {
+                question: "Perbedaan utama Qadha dan Qadar adalah...",
+                options: ["Tidak ada perbedaan", "Qadha ketetapan, Qadar pelaksanaan", "Qadar ketetapan, Qadha pelaksanaan", "Keduanya sama saja"],
+                correct: 1
+            },
+            {
+                question: "Contoh Qadha Allah adalah...",
+                options: ["Hujan turun hari ini", "Ketetapan rezeki sejak azali", "Manusia berdoa", "Orang bekerja keras"],
+                correct: 1
+            },
+            {
+                question: "Contoh Qadar Allah adalah...",
+                options: ["Ketetapan sejak azali", "Hujan turun saat musim", "Doa yang dipanjatkan", "Rencana manusia"],
+                correct: 1
+            },
+            {
+                question: "Sikap yang benar terhadap takdir baik adalah...",
+                options: ["Sombong dan lupa diri", "Bersyukur kepada Allah", "Merasa hebat sendiri", "Tidak peduli orang lain"],
+                correct: 1
+            },
+            {
+                question: "Manusia tetap harus berusaha karena...",
+                options: ["Takdir bisa diubah", "Usaha adalah bagian dari takdir", "Allah tidak tahu masa depan", "Manusia lebih pintar"],
+                correct: 1
+            },
+            {
+                question: "Tawakkal yang benar adalah...",
+                options: ["Berserah tanpa usaha", "Berusaha lalu berserah", "Hanya berdoa saja", "Pasrah dengan keadaan"],
+                correct: 1
+            },
+            {
+                question: "Qadha dan Qadar ditetapkan Allah sejak...",
+                options: ["Manusia lahir", "Azali (sebelum penciptaan)", "Setiap hari", "Saat dewasa"],
+                correct: 1
+            },
+            {
+                question: "Beriman kepada takdir membuat kita...",
+                options: ["Malas berusaha", "Optimis dan sabar", "Takut masa depan", "Sombong"],
+                correct: 1
+            },
+            {
+                question: "Hadits tentang takdir menyebutkan ditetapkan...",
+                options: ["50.000 tahun sebelum penciptaan", "Saat lahir", "Setiap tahun", "Tidak disebutkan"],
+                correct: 0
+            }
+        ];
+
+        // Evaluation Quiz Data (separate pool - 12 questions)
+        const evaluationQuizPool = [
+            {
+                question: "Jelaskan perbedaan mendasar antara Qadha dan Qadar!",
+                options: ["Qadha adalah ketetapan Allah sejak azali, Qadar adalah pelaksanaannya di dunia", "Tidak ada perbedaan keduanya", "Qadha untuk hal baik, Qadar untuk hal buruk", "Qadha dari Allah, Qadar dari manusia"],
+                correct: 0
+            },
+            {
+                question: "Ayat Al-Quran 'Wa kullu syai'in 'indahu bi miqdaar' terdapat dalam surat...",
+                options: ["Al-Fatihah", "Ar-Ra'd ayat 8", "Al-Baqarah", "An-Nas"],
+                correct: 1
+            },
+            {
+                question: "Hikmah utama beriman kepada Qadha dan Qadar adalah...",
+                options: ["Menjadi malas berusaha", "Hati tenang, tidak mudah putus asa, dan tidak sombong", "Tidak peduli dengan masa depan", "Selalu mengeluh"],
+                correct: 1
+            },
+            {
+                question: "Contoh takdir mubram (tidak dapat diubah) adalah...",
+                options: ["Pekerjaan", "Jenis kelamin dan tempat lahir", "Kesehatan", "Kekayaan"],
+                correct: 1
+            },
+            {
+                question: "Contoh takdir mu'allaq (dapat berubah dengan usaha) adalah...",
+                options: ["Hari kelahiran", "Nama orang tua", "Kesehatan dan rezeki", "Jenis kelamin"],
+                correct: 2
+            },
+            {
+                question: "Sikap yang benar ketika mendapat musibah menurut ajaran Qadha dan Qadar adalah...",
+                options: ["Marah dan menggerutu", "Sabar, berdoa, dan tetap berusaha", "Putus asa dan menyerah", "Menyalahkan orang lain"],
+                correct: 1
+            },
+            {
+                question: "Tawakkal yang benar adalah...",
+                options: ["Berserah diri tanpa usaha", "Berusaha maksimal kemudian berserah kepada Allah", "Hanya berdoa tanpa berbuat", "Pasrah dengan keadaan"],
+                correct: 1
+            },
+            {
+                question: "Beriman kepada Qadha dan Qadar termasuk rukun iman yang ke...",
+                options: ["Keempat", "Kelima", "Keenam", "Ketujuh"],
+                correct: 2
+            },
+            {
+                question: "Hadits yang menyebutkan Allah menetapkan takdir makhluk adalah...",
+                options: ["50.000 tahun sebelum langit dan bumi diciptakan", "Saat manusia dilahirkan", "Setiap tahun sekali", "Setiap hari"],
+                correct: 0
+            },
+            {
+                question: "Manfaat beriman kepada Qadha dan Qadar dalam kehidupan sehari-hari adalah...",
+                options: ["Membuat kita malas", "Membuat kita optimis, sabar, dan bersyukur", "Membuat kita takut", "Membuat kita sombong"],
+                correct: 1
+            },
+            {
+                question: "Mengapa manusia tetap harus berusaha meskipun sudah ada takdir?",
+                options: ["Karena takdir bisa diubah", "Karena usaha adalah bagian dari takdir Allah", "Karena Allah tidak tahu masa depan", "Karena manusia lebih pintar"],
+                correct: 1
+            },
+            {
+                question: "Apa yang dimaksud dengan 'Lauh Mahfuzh' dalam konteks Qadha dan Qadar?",
+                options: ["Buku catatan manusia", "Kitab yang berisi semua ketetapan Allah", "Doa yang mustajab", "Amalan yang baik"],
+                correct: 1
+            }
+        ];
+
+        // Global variables
+        let chatUnsubscribe = null;
+        let onlineUsersUnsubscribe = null;
+        let currentRaceUnsubscribe = null;
+        let unreadCount = 0;
+
+        // Function to shuffle array
+        function shuffleArray(array) {
+            const shuffled = [...array];
+            for (let i = shuffled.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+            }
+            return shuffled;
+        }
+
+        // Function to shuffle question options
+        function shuffleQuestion(question) {
+            const correctAnswer = question.options[question.correct];
+            const shuffledOptions = shuffleArray(question.options);
+            const newCorrectIndex = shuffledOptions.indexOf(correctAnswer);
+            
+            return {
+                ...question,
+                options: shuffledOptions,
+                correct: newCorrectIndex
+            };
+        }
+
+        // Function to get random questions
+        function getRandomQuestions(pool, count) {
+            const shuffledPool = shuffleArray(pool);
+            const selectedQuestions = shuffledPool.slice(0, count);
+            return selectedQuestions.map(q => shuffleQuestion(q));
+        }
+
+        // Firebase connection status
+        function updateFirebaseStatus(connected) {
+            const statusElement = document.getElementById('firebaseStatus');
+            const connectionStatus = document.getElementById('connectionStatus');
+            
+            if (connected) {
+                statusElement.className = 'firebase-status firebase-connected';
+                statusElement.innerHTML = '<i class="fas fa-circle mr-1"></i>Connected';
+                if (connectionStatus) connectionStatus.textContent = 'Online';
+            } else {
+                statusElement.className = 'firebase-status firebase-disconnected';
+                statusElement.innerHTML = '<i class="fas fa-circle mr-1"></i>Disconnected';
+                if (connectionStatus) connectionStatus.textContent = 'Offline';
+            }
+        }
+
+        // Initialize Firebase listeners
+        function initializeFirebaseListeners() {
+            if (!window.FirebaseService) {
+                setTimeout(initializeFirebaseListeners, 1000);
+                return;
+            }
+
+            updateFirebaseStatus(true);
+
+            // Listen to online users
+            onlineUsersUnsubscribe = window.FirebaseService.listenToOnlineUsers((users) => {
+                updateOnlineUsersList(users);
+            });
+
+            // Listen to chat messages
+            chatUnsubscribe = window.FirebaseService.listenToChatMessages((messages) => {
+                displayFirebaseMessages(messages);
+            });
+        }
+
+        // Update online users list
+        function updateOnlineUsersList(users) {
+            const playersList = document.getElementById('onlinePlayersList');
+            const playerCount = document.getElementById('livePlayerCount');
+            const onlineCount = document.getElementById('onlineCount');
+            const chatOnlineCount = document.getElementById('chatOnlineCount');
+            
+            if (playersList) {
+                if (users.length === 0) {
+                    playersList.innerHTML = '<div class="text-xs text-gray-500">Tidak ada pemain online</div>';
+                } else {
+                    const colors = ['green', 'blue', 'purple', 'orange', 'pink', 'red', 'yellow', 'indigo'];
+                    playersList.innerHTML = users.slice(0, 8).map((user, index) => `
+                        <div class="flex items-center space-x-1 bg-${colors[index % colors.length]}-100 rounded-full px-2 py-1">
+                            <div class="w-2 h-2 bg-${colors[index % colors.length]}-500 rounded-full animate-pulse"></div>
+                            <span class="text-xs font-medium text-${colors[index % colors.length]}-700">${user.name || 'User'}</span>
+                        </div>
+                    `).join('');
+                }
+            }
+            
+            if (playerCount) playerCount.textContent = `${users.length}/12`;
+            if (onlineCount) onlineCount.textContent = `${users.length} Online`;
+            if (chatOnlineCount) chatOnlineCount.textContent = `${users.length} siswa online`;
+        }
+
+        // Display Firebase chat messages
+        function displayFirebaseMessages(messages) {
+            const chatArea = document.getElementById('chatArea');
+            
+            if (!chatArea) return;
+            
+            if (messages.length === 0) {
+                chatArea.innerHTML = `
+                    <div class="text-center text-gray-500 text-sm">
+                        Mulai diskusi tentang materi Qadha dan Qadar...
+                    </div>
+                `;
+                return;
+            }
+            
+            chatArea.innerHTML = messages.map(msg => {
+                const timestamp = msg.timestamp?.toDate?.() || new Date();
+                const timeString = timestamp.toLocaleTimeString('id-ID', { 
+                    hour: '2-digit', 
+                    minute: '2-digit' 
+                });
+                
+                const isCurrentUser = msg.userId === window.currentUser?.uid;
+                
+                return `
+                    <div class="flex ${isCurrentUser ? 'justify-end' : 'justify-start'} mb-3">
+                        <div class="max-w-xs lg:max-w-md">
+                            <div class="flex items-center space-x-2 mb-1 ${isCurrentUser ? 'justify-end' : 'justify-start'}">
+                                <span class="font-semibold text-xs ${isCurrentUser ? 'text-blue-600' : 'text-purple-600'}">${msg.userName || 'User'}</span>
+                                <span class="text-xs text-gray-500">${timeString}</span>
+                            </div>
+                            <div class="p-3 rounded-lg ${isCurrentUser ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white' : 'bg-gray-100 border border-gray-200'}">
+                                ${msg.text}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        // Page Navigation
+        function showPage(pageId) {
+            // Hide all pages
+            const pages = ['homePage', 'materiPage', 'gamePage', 'evaluasiPage', 'diskusiPage'];
+            pages.forEach(page => {
+                document.getElementById(page).classList.add('hidden');
+            });
+            
+            // Show selected page
+            document.getElementById(pageId).classList.remove('hidden');
+            document.getElementById(pageId).classList.add('fade-in');
+            
+            // Update navigation
+            const navButtons = document.querySelectorAll('.nav-btn');
+            navButtons.forEach(btn => {
+                btn.classList.remove('text-islamic-green');
+                btn.classList.add('text-gray-500');
+            });
+            
+            const activeBtn = document.querySelector(`[data-page="${pageId}"]`);
+            if (activeBtn) {
+                activeBtn.classList.remove('text-gray-500');
+                activeBtn.classList.add('text-islamic-green');
+            }
+
+            // Reset unread count when entering chat
+            if (pageId === 'diskusiPage') {
+                unreadCount = 0;
+                updateUnreadBadge();
+            }
+        }
+
+        // Update unread message badge
+        function updateUnreadBadge() {
+            const badge = document.getElementById('unreadBadge');
+            const unreadMessages = document.getElementById('unreadMessages');
+            
+            if (badge) {
+                badge.textContent = unreadCount;
+                badge.style.display = unreadCount > 0 ? 'flex' : 'none';
+            }
+            
+            if (unreadMessages) {
+                unreadMessages.textContent = unreadCount;
+                unreadMessages.style.display = unreadCount > 0 ? 'flex' : 'none';
+            }
+        }
+
+        // Functions
+        function openMateri(id) {
+            const materi = materiData[id];
+            document.getElementById('materiTitle').textContent = materi.title;
+            document.getElementById('materiContent').innerHTML = materi.content;
+            document.getElementById('materiModal').classList.remove('hidden');
+        }
+
+        function closeMateri() {
+            document.getElementById('materiModal').classList.add('hidden');
+        }
+
+        function showProfile() {
+            const profileHTML = `
+                <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-xl p-6 max-w-sm w-full mx-4 bounce-in">
+                        <div class="text-center mb-6">
+                            <div class="w-20 h-20 bg-islamic-accent rounded-full flex items-center justify-center mx-auto mb-3">
+                                <span class="text-3xl">👤</span>
+                            </div>
+                            <h3 class="text-xl font-bold text-gray-800">Ahmad Fauzi</h3>
+                            <p class="text-sm text-gray-600">Kelas 5A • Level 3</p>
+                            <div class="flex items-center justify-center mt-2">
+                                <div class="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse"></div>
+                                <span class="text-xs text-green-600 font-medium">Online</span>
+                            </div>
+                        </div>
+                        
+                        <div class="space-y-3 mb-6">
+                            <div class="flex justify-between items-center p-3 bg-islamic-pale rounded-lg">
+                                <span class="text-sm font-medium">Total Poin</span>
+                                <span class="font-bold text-islamic-green">1,920</span>
+                            </div>
+                            <div class="flex justify-between items-center p-3 bg-orange-50 rounded-lg">
+                                <span class="text-sm font-medium">Race Dimainkan</span>
+                                <span class="font-bold text-orange-600">12</span>
+                            </div>
+                            <div class="flex justify-between items-center p-3 bg-purple-50 rounded-lg">
+                                <span class="text-sm font-medium">Akurasi</span>
+                                <span class="font-bold text-purple-600">85%</span>
+                            </div>
+                            <div class="flex justify-between items-center p-3 bg-blue-50 rounded-lg">
+                                <span class="text-sm font-medium">Peringkat Kelas</span>
+                                <span class="font-bold text-blue-600">#3</span>
+                            </div>
+                        </div>
+                        
+                        <button onclick="closeProfile()" class="w-full px-4 py-2 bg-islamic-green text-white rounded-lg hover:bg-islamic-light">Tutup</button>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', profileHTML);
+        }
+
+        function closeProfile() {
+            const profileModal = document.querySelector('.fixed.inset-0.bg-black.bg-opacity-50');
+            if (profileModal) profileModal.remove();
+        }
+
+        // Quiz Race Functions
+        function joinRace() {
+            showRaceInterface();
+        }
+
+        function createQuickRace() {
+            showRaceInterface();
+        }
+
+        function showPracticeMode() {
+            playQuiz();
+        }
+
+        function showRaceInterface() {
+            let currentQuestion = 0;
+            let playerScore = 0;
+            let timeLeft = 30;
+            let raceTimer;
+            
+            // Get randomized questions for this race
+            const raceQuestions = getRandomQuestions(quizDataPool, 10);
+            
+            // Race positions (0-100, where 100 is finish line)
+            let racePositions = {
+                ahmad: 5,
+                siti: 3,
+                rizki: 7,
+                fatimah: 4,
+                umar: 6
+            };
+
+            function showRaceQuestion() {
+                const question = raceQuestions[currentQuestion];
+                const raceHTML = `
+                    <div class="fixed inset-0 bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 flex flex-col z-50">
+                        <!-- Race Header -->
+                        <div class="bg-black bg-opacity-30 p-4">
+                            <div class="flex items-center justify-between text-white">
+                                <div class="flex items-center space-x-3">
+                                    <div class="w-8 h-8 bg-red-500 rounded-full flex items-center justify-center">
+                                        <span class="font-bold text-sm">${currentQuestion + 1}</span>
+                                    </div>
+                                    <span class="font-semibold">Soal ${currentQuestion + 1}/10</span>
+                                </div>
+                                <div class="flex items-center space-x-4">
+                                    <div class="text-center">
+                                        <div class="text-2xl font-bold" id="raceTimer">${timeLeft}</div>
+                                        <div class="text-xs opacity-75">detik</div>
+                                    </div>
+                                    <button onclick="exitRace()" class="text-red-400 hover:text-red-300">
+                                        <i class="fas fa-times text-xl"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Racing Track -->
+                        <div class="bg-gradient-to-b from-green-400 to-green-600 p-4 relative overflow-hidden">
+                            <div class="text-center text-white font-bold mb-2">🏁 REALTIME QUIZ RACE 🏁</div>
+                            
+                            <!-- Race Track Background -->
+                            <div class="relative bg-gray-800 rounded-lg p-4 mb-2" style="background-image: repeating-linear-gradient(90deg, transparent, transparent 15px, white 15px, white 17px);">
+                                
+                                <!-- Finish Line -->
+                                <div class="absolute right-4 top-0 bottom-0 w-3 bg-gradient-to-b from-yellow-400 via-red-500 to-yellow-400 rounded"></div>
+                                <div class="absolute right-1 top-1/2 transform -translate-y-1/2 text-white text-xs font-bold rotate-90">FINISH</div>
+                                
+                                <!-- Racing Cars with Real-time Positions -->
+                                <div class="space-y-2 py-2">
+                                    <!-- Ahmad's Car -->
+                                    <div class="relative h-8 bg-blue-900 bg-opacity-30 rounded flex items-center">
+                                        <div id="ahmadCar" class="absolute car-move" style="left: ${racePositions.ahmad}%">
+                                            <div class="flex items-center space-x-1">
+                                                <div class="text-2xl">🏎️</div>
+                                                <span class="text-white text-xs font-bold bg-green-500 px-2 py-1 rounded">Ahmad</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Siti's Car -->
+                                    <div class="relative h-8 bg-blue-900 bg-opacity-30 rounded flex items-center">
+                                        <div id="sitiCar" class="absolute car-move" style="left: ${racePositions.siti}%">
+                                            <div class="flex items-center space-x-1">
+                                                <div class="text-2xl">🚗</div>
+                                                <span class="text-white text-xs font-bold bg-pink-500 px-2 py-1 rounded">Siti</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Rizki's Car -->
+                                    <div class="relative h-8 bg-blue-900 bg-opacity-30 rounded flex items-center">
+                                        <div id="rizkiCar" class="absolute car-move" style="left: ${racePositions.rizki}%">
+                                            <div class="flex items-center space-x-1">
+                                                <div class="text-2xl">🏁</div>
+                                                <span class="text-white text-xs font-bold bg-purple-500 px-2 py-1 rounded">Rizki</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Fatimah's Car -->
+                                    <div class="relative h-8 bg-blue-900 bg-opacity-30 rounded flex items-center">
+                                        <div id="fatimahCar" class="absolute car-move" style="left: ${racePositions.fatimah}%">
+                                            <div class="flex items-center space-x-1">
+                                                <div class="text-2xl">🚙</div>
+                                                <span class="text-white text-xs font-bold bg-yellow-500 px-2 py-1 rounded">Fatimah</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Umar's Car -->
+                                    <div class="relative h-8 bg-blue-900 bg-opacity-30 rounded flex items-center">
+                                        <div id="umarCar" class="absolute car-move" style="left: ${racePositions.umar}%">
+                                            <div class="flex items-center space-x-1">
+                                                <div class="text-2xl">🚕</div>
+                                                <span class="text-white text-xs font-bold bg-orange-500 px-2 py-1 rounded">Umar</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Live Scores -->
+                            <div class="flex justify-center space-x-2 text-white text-xs">
+                                <div class="bg-green-500 bg-opacity-80 rounded px-2 py-1">
+                                    <span class="font-bold">Ahmad: ${playerScore}</span>
+                                </div>
+                                <div class="bg-pink-500 bg-opacity-80 rounded px-2 py-1">
+                                    <span class="font-bold">Siti: ${Math.floor(Math.random() * 200) + 100}</span>
+                                </div>
+                                <div class="bg-purple-500 bg-opacity-80 rounded px-2 py-1">
+                                    <span class="font-bold">Rizki: ${Math.floor(Math.random() * 200) + 120}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Question Area -->
+                        <div class="flex-1 flex items-center justify-center p-4">
+                            <div class="bg-white rounded-2xl p-6 max-w-2xl w-full shadow-2xl">
+                                <h3 class="text-xl font-bold text-gray-800 mb-6 text-center">${question.question}</h3>
+                                
+                                <div class="grid grid-cols-1 gap-3">
+                                    ${question.options.map((option, index) => `
+                                        <button onclick="selectRaceAnswer(${index})" 
+                                                class="race-option p-4 bg-gradient-to-r from-gray-100 to-gray-200 rounded-xl text-left font-medium hover:from-blue-100 hover:to-blue-200 transition-all transform hover:scale-105 active:scale-95">
+                                            <div class="flex items-center space-x-3">
+                                                <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center font-bold text-gray-600">
+                                                    ${String.fromCharCode(65 + index)}
+                                                </div>
+                                                <span>${option}</span>
+                                            </div>
+                                        </button>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                document.body.insertAdjacentHTML('beforeend', raceHTML);
+
+                // Start countdown
+                raceTimer = setInterval(() => {
+                    timeLeft--;
+                    const timerElement = document.getElementById('raceTimer');
+                    if (timerElement) {
+                        timerElement.textContent = timeLeft;
+                        if (timeLeft <= 10) {
+                            timerElement.classList.add('text-red-400');
+                        }
+                    }
+                    
+                    if (timeLeft <= 0) {
+                        clearInterval(raceTimer);
+                        nextRaceQuestion();
+                    }
+                }, 1000);
+
+                // Simulate other players answering
+                setTimeout(() => {
+                    simulateOtherPlayersAnswering();
+                }, Math.random() * 15000 + 5000); // Random between 5-20 seconds
+            }
+
+            function simulateOtherPlayersAnswering() {
+                // Simulate Siti answering
+                const sitiCorrect = Math.random() > 0.25; // 75% chance correct
+                racePositions.siti += sitiCorrect ? Math.random() * 15 + 10 : -Math.random() * 8;
+                
+                // Simulate Rizki answering
+                const rizkiCorrect = Math.random() > 0.35; // 65% chance correct
+                racePositions.rizki += rizkiCorrect ? Math.random() * 12 + 8 : -Math.random() * 6;
+                
+                // Simulate Fatimah answering
+                const fatimahCorrect = Math.random() > 0.4; // 60% chance correct
+                racePositions.fatimah += fatimahCorrect ? Math.random() * 10 + 7 : -Math.random() * 5;
+                
+                // Simulate Umar answering
+                const umarCorrect = Math.random() > 0.3; // 70% chance correct
+                racePositions.umar += umarCorrect ? Math.random() * 13 + 9 : -Math.random() * 7;
+
+                // Keep positions within bounds
+                Object.keys(racePositions).forEach(player => {
+                    racePositions[player] = Math.max(0, Math.min(95, racePositions[player]));
+                });
+
+                // Update car positions
+                updateCarPositions();
+            }
+
+            function updateCarPositions() {
+                const sitiCar = document.getElementById('sitiCar');
+                const rizkiCar = document.getElementById('rizkiCar');
+                const fatimahCar = document.getElementById('fatimahCar');
+                const umarCar = document.getElementById('umarCar');
+                
+                if (sitiCar) sitiCar.style.left = racePositions.siti + '%';
+                if (rizkiCar) rizkiCar.style.left = racePositions.rizki + '%';
+                if (fatimahCar) fatimahCar.style.left = racePositions.fatimah + '%';
+                if (umarCar) umarCar.style.left = racePositions.umar + '%';
+            }
+
+            window.selectRaceAnswer = function(selectedIndex) {
+                clearInterval(raceTimer);
+                
+                const question = raceQuestions[currentQuestion];
+                const isCorrect = selectedIndex === question.correct;
+                
+                // Update player score and position
+                if (isCorrect) {
+                    const speedBonus = Math.max(50, timeLeft * 5); // Bonus for speed
+                    playerScore += speedBonus;
+                    racePositions.ahmad += Math.random() * 10 + 15; // Move forward 15-25 steps
+                } else {
+                    racePositions.ahmad = Math.max(0, racePositions.ahmad - (Math.random() * 5 + 5)); // Move backward 5-10 steps
+                }
+                
+                // Keep Ahmad's position within bounds
+                racePositions.ahmad = Math.max(0, Math.min(95, racePositions.ahmad));
+
+                // Animate Ahmad's car movement
+                const ahmadCar = document.getElementById('ahmadCar');
+                if (ahmadCar) ahmadCar.style.left = racePositions.ahmad + '%';
+
+                // Show feedback with car movement effects
+                const options = document.querySelectorAll('.race-option');
+                options.forEach((option, index) => {
+                    if (index === question.correct) {
+                        option.classList.add('from-green-400', 'to-green-500', 'text-white');
+                        option.innerHTML += ' <span class="ml-2">✅ Benar!</span>';
+                    } else if (index === selectedIndex && !isCorrect) {
+                        option.classList.add('from-red-400', 'to-red-500', 'text-white');
+                        option.innerHTML += ' <span class="ml-2">❌ Salah!</span>';
+                    }
+                    option.disabled = true;
+                });
+
+                // Show movement feedback
+                if (isCorrect) {
+                    showMovementFeedback('🏎️ Ahmad maju pesat! +' + Math.floor((Math.random() * 10 + 15)) + ' langkah', 'success');
+                } else {
+                    showMovementFeedback('😔 Ahmad mundur! -' + Math.floor((Math.random() * 5 + 5)) + ' langkah', 'error');
+                }
+
+                setTimeout(() => {
+                    nextRaceQuestion();
+                }, 3000);
+            };
+            
+            function showMovementFeedback(message, type) {
+                const feedbackHTML = `
+                    <div id="movementFeedback" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-60 
+                         ${type === 'success' ? 'bg-green-500' : 'bg-red-500'} text-white px-6 py-3 rounded-lg font-bold text-lg shadow-2xl bounce-in">
+                        ${message}
+                    </div>
+                `;
+                document.body.insertAdjacentHTML('beforeend', feedbackHTML);
+                
+                setTimeout(() => {
+                    const feedback = document.getElementById('movementFeedback');
+                    if (feedback) feedback.remove();
+                }, 2500);
+            }
+
+            function nextRaceQuestion() {
+                exitRace();
+                currentQuestion++;
+                
+                if (currentQuestion < raceQuestions.length) {
+                    timeLeft = 30;
+                    showRaceQuestion();
+                } else {
+                    showRaceResults();
+                }
+            }
+
+            function showRaceResults() {
+                // Determine final positions based on race positions
+                const finalPositions = [
+                    { name: 'Ahmad', position: racePositions.ahmad, score: playerScore, car: '🏎️' },
+                    { name: 'Siti', position: racePositions.siti, score: Math.floor(Math.random() * 300) + 200, car: '🚗' },
+                    { name: 'Rizki', position: racePositions.rizki, score: Math.floor(Math.random() * 300) + 150, car: '🏁' },
+                    { name: 'Fatimah', position: racePositions.fatimah, score: Math.floor(Math.random() * 250) + 180, car: '🚙' },
+                    { name: 'Umar', position: racePositions.umar, score: Math.floor(Math.random() * 280) + 160, car: '🚕' }
+                ].sort((a, b) => b.position - a.position);
+
+                const playerRank = finalPositions.findIndex(p => p.name === 'Ahmad') + 1;
+                const medals = ['🥇', '🥈', '🥉', '🏅', '🎖️'];
+                const correctAnswers = Math.floor(playerScore / 100);
+                
+                // Update Firebase stats
+                if (window.FirebaseService && window.currentUser) {
+                    window.FirebaseService.updateUserStats(playerScore, (correctAnswers / 10) * 100);
+                }
+                
+                const resultsHTML = `
+                    <div class="fixed inset-0 bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 flex items-center justify-center z-50">
+                        <div class="bg-white rounded-2xl p-6 max-w-md w-full mx-4 text-center max-h-screen overflow-y-auto bounce-in">
+                            <!-- Celebration Animation -->
+                            <div class="relative mb-4">
+                                <div class="w-20 h-20 ${playerRank === 1 ? 'bg-yellow-500' : playerRank === 2 ? 'bg-gray-400' : playerRank === 3 ? 'bg-orange-600' : 'bg-blue-500'} rounded-full flex items-center justify-center mx-auto animate-bounce">
+                                    <span class="text-4xl">${medals[playerRank - 1] || '🏆'}</span>
+                                </div>
+                                ${playerRank === 1 ? '<div class="absolute inset-0 animate-ping bg-yellow-300 rounded-full opacity-75"></div>' : ''}
+                            </div>
+                            
+                            <h3 class="text-2xl font-bold text-gray-800 mb-2">
+                                ${playerRank === 1 ? '🎉 JUARA 1! 🎉' : playerRank === 2 ? '👏 JUARA 2!' : playerRank === 3 ? '👍 JUARA 3!' : `Peringkat ${playerRank}`}
+                            </h3>
+                            <p class="text-gray-600 mb-2">Posisi Akhir: <span class="font-bold text-2xl text-orange-600">${racePositions.ahmad.toFixed(0)}%</span></p>
+                            <p class="text-gray-600 mb-6">Skor Total: <span class="font-bold text-xl text-green-600">${playerScore}</span></p>
+                            
+                            <!-- Final Race Track -->
+                            <div class="bg-gray-800 rounded-lg p-3 mb-4 relative" style="background-image: repeating-linear-gradient(90deg, transparent, transparent 10px, white 10px, white 11px);">
+                                <div class="absolute right-2 top-0 bottom-0 w-1 bg-yellow-400"></div>
+                                <div class="space-y-1">
+                                    ${finalPositions.map((player, index) => `
+                                        <div class="flex items-center justify-between text-white text-sm">
+                                            <div class="flex items-center space-x-2">
+                                                <span>${medals[index]}</span>
+                                                <span>${player.car}</span>
+                                                <span class="font-bold ${player.name === 'Ahmad' ? 'text-green-400' : ''}">${player.name}</span>
+                                            </div>
+                                            <span class="font-bold">${player.position.toFixed(0)}%</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            
+                            <div class="bg-gray-50 rounded-xl p-4 mb-6">
+                                <h4 class="font-semibold mb-3">📊 Statistik Race:</h4>
+                                <div class="space-y-2 text-sm">
+                                    <div class="flex justify-between">
+                                        <span>Jawaban Benar:</span>
+                                        <span class="font-bold text-green-600">${correctAnswers} dari 10</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span>Posisi Akhir:</span>
+                                        <span class="font-bold">Peringkat ${playerRank} dari 5</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span>Jarak Tempuh:</span>
+                                        <span class="font-bold">${racePositions.ahmad.toFixed(0)}% menuju finish</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span>Akurasi:</span>
+                                        <span class="font-bold">${(correctAnswers * 10)}%</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="flex space-x-3">
+                                <button onclick="closeRaceResults()" class="flex-1 px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">Tutup</button>
+                                <button onclick="playAgain()" class="flex-1 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600">
+                                    <i class="fas fa-redo mr-1"></i>
+                                    Race Lagi!
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                document.body.insertAdjacentHTML('beforeend', resultsHTML);
+            }
+
+            window.exitRace = function() {
+                clearInterval(raceTimer);
+                const raceModal = document.querySelector('.fixed.inset-0.bg-gradient-to-br');
+                if (raceModal) raceModal.remove();
+            };
+
+            window.closeRaceResults = function() {
+                const resultsModal = document.querySelector('.fixed.inset-0.bg-gradient-to-br');
+                if (resultsModal) resultsModal.remove();
+            };
+
+            window.playAgain = function() {
+                closeRaceResults();
+                showRaceInterface();
+            };
+
+            showRaceQuestion();
+        }
+
+        function playQuiz() {
+            let currentQuestion = 0;
+            let score = 0;
+            const practiceQuestions = getRandomQuestions(quizDataPool, 5); // 5 random questions for practice
+
+            function showQuestion() {
+                const question = practiceQuestions[currentQuestion];
+                const quizHTML = `
+                    <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                        <div class="bg-white rounded-xl p-6 max-w-md w-full mx-4 bounce-in">
+                            <h3 class="text-lg font-bold text-islamic-green mb-4">Mode Latihan - Soal ${currentQuestion + 1}/5</h3>
+                            <p class="mb-4 font-medium">${question.question}</p>
+                            <div class="space-y-2 mb-4">
+                                ${question.options.map((option, index) => `
+                                    <label class="flex items-center p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-all">
+                                        <input type="radio" name="quizAnswer" value="${index}" class="mr-3">
+                                        <span>${option}</span>
+                                    </label>
+                                `).join('')}
+                            </div>
+                            <div class="flex justify-between">
+                                <button onclick="closeQuiz()" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">Tutup</button>
+                                <button onclick="submitAnswer()" class="px-4 py-2 bg-islamic-green text-white rounded-lg hover:bg-islamic-light">
+                                    ${currentQuestion === practiceQuestions.length - 1 ? 'Selesai' : 'Selanjutnya'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                document.body.insertAdjacentHTML('beforeend', quizHTML);
+            }
+
+            window.submitAnswer = function() {
+                const selected = document.querySelector('input[name="quizAnswer"]:checked');
+                if (!selected) {
+                    alert('Pilih jawaban terlebih dahulu!');
+                    return;
+                }
+
+                if (parseInt(selected.value) === practiceQuestions[currentQuestion].correct) {
+                    score++;
+                }
+
+                currentQuestion++;
+                closeQuiz();
+
+                if (currentQuestion < practiceQuestions.length) {
+                    showQuestion();
+                } else {
+                    const percentage = (score / practiceQuestions.length) * 100;
+                    alert(`🎯 Latihan selesai!\n\nSkor Anda: ${score}/${practiceQuestions.length} (${percentage}%)\n\n${percentage >= 80 ? '🎉 Excellent! Anda siap untuk race!' : percentage >= 60 ? '👍 Good! Terus berlatih!' : '💪 Keep trying! Pelajari materi lagi!'}`);
+                }
+            };
+
+            window.closeQuiz = function() {
+                const quizModal = document.querySelector('.fixed.inset-0.bg-black.bg-opacity-50');
+                if (quizModal) quizModal.remove();
+            };
+
+            showQuestion();
+        }
+
+        function startEvaluasi() {
+            let currentQuestion = 0;
+            let score = 0;
+            let timeLeft = 1200; // 20 minutes in seconds
+            let evalTimer;
+            const evaluationQuestions = getRandomQuestions(evaluationQuizPool, 10); // 10 random evaluation questions
+
+            function showEvaluationQuestion() {
+                const question = evaluationQuestions[currentQuestion];
+                const minutes = Math.floor(timeLeft / 60);
+                const seconds = timeLeft % 60;
+                
+                const evalHTML = `
+                    <div class="fixed inset-0 bg-gradient-to-br from-purple-900 to-indigo-900 flex items-center justify-center z-50">
+                        <div class="bg-white rounded-xl p-6 max-w-2xl w-full mx-4 max-h-screen overflow-y-auto bounce-in">
+                            <!-- Header -->
+                            <div class="flex justify-between items-center mb-6 pb-4 border-b">
+                                <div>
+                                    <h3 class="text-xl font-bold text-purple-600">📝 Evaluasi Pembelajaran</h3>
+                                    <p class="text-sm text-gray-600">Soal ${currentQuestion + 1} dari 10</p>
+                                </div>
+                                <div class="text-right">
+                                    <div class="text-2xl font-bold text-purple-600" id="evalTimer">${minutes}:${seconds.toString().padStart(2, '0')}</div>
+                                    <div class="text-xs text-gray-500">Waktu tersisa</div>
+                                </div>
+                            </div>
+
+                            <!-- Progress Bar -->
+                            <div class="mb-6">
+                                <div class="flex justify-between text-sm text-gray-600 mb-2">
+                                    <span>Progress</span>
+                                    <span>${currentQuestion}/10</span>
+                                </div>
+                                <div class="w-full bg-gray-200 rounded-full h-2">
+                                    <div class="bg-purple-600 h-2 rounded-full transition-all duration-300" style="width: ${(currentQuestion / 10) * 100}%"></div>
+                                </div>
+                            </div>
+                            
+                            <!-- Question -->
+                            <div class="mb-6">
+                                <h4 class="text-lg font-semibold text-gray-800 mb-4">${question.question}</h4>
+                                <div class="space-y-3">
+                                    ${question.options.map((option, index) => `
+                                        <label class="flex items-start p-4 bg-gray-50 rounded-lg cursor-pointer hover:bg-purple-50 transition-all border-2 border-transparent hover:border-purple-200">
+                                            <input type="radio" name="evalAnswer" value="${index}" class="mt-1 mr-4">
+                                            <span class="flex-1">${option}</span>
+                                        </label>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            
+                            <div class="flex justify-between">
+                                <button onclick="exitEvaluation()" class="px-6 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
+                                    <i class="fas fa-times mr-2"></i>Keluar
+                                </button>
+                                <button onclick="submitEvalAnswer()" class="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
+                                    ${currentQuestion === evaluationQuestions.length - 1 ? 'Selesai' : 'Selanjutnya'}
+                                    <i class="fas fa-arrow-right ml-2"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                document.body.insertAdjacentHTML('beforeend', evalHTML);
+
+                // Start timer
+                evalTimer = setInterval(() => {
+                    timeLeft--;
+                    const timerElement = document.getElementById('evalTimer');
+                    if (timerElement) {
+                        const mins = Math.floor(timeLeft / 60);
+                        const secs = timeLeft % 60;
+                        timerElement.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+                        
+                        if (timeLeft <= 300) { // Last 5 minutes
+                            timerElement.classList.add('text-red-500');
+                        }
+                    }
+                    
+                    if (timeLeft <= 0) {
+                        clearInterval(evalTimer);
+                        showEvaluationResults();
+                    }
+                }, 1000);
+            }
+
+            window.submitEvalAnswer = function() {
+                const selected = document.querySelector('input[name="evalAnswer"]:checked');
+                if (!selected) {
+                    alert('Pilih jawaban terlebih dahulu!');
+                    return;
+                }
+
+                if (parseInt(selected.value) === evaluationQuestions[currentQuestion].correct) {
+                    score++;
+                }
+
+                currentQuestion++;
+                exitEvaluation();
+
+                if (currentQuestion < evaluationQuestions.length) {
+                    showEvaluationQuestion();
+                } else {
+                    clearInterval(evalTimer);
+                    showEvaluationResults();
+                }
+            };
+
+            window.exitEvaluation = function() {
+                const evalModal = document.querySelector('.fixed.inset-0.bg-gradient-to-br');
+                if (evalModal) evalModal.remove();
+            };
+
+            function showEvaluationResults() {
+                clearInterval(evalTimer);
+                const finalScore = (score / evaluationQuestions.length) * 100;
+                const passed = finalScore >= 70;
+                
+                const resultsHTML = `
+                    <div class="fixed inset-0 bg-gradient-to-br from-purple-900 to-indigo-900 flex items-center justify-center z-50">
+                        <div class="bg-white rounded-xl p-6 max-w-md w-full mx-4 text-center bounce-in">
+                            <div class="mb-6">
+                                <div class="w-20 h-20 ${passed ? 'bg-green-500' : 'bg-red-500'} rounded-full flex items-center justify-center mx-auto mb-4">
+                                    <i class="fas ${passed ? 'fa-check' : 'fa-times'} text-3xl text-white"></i>
+                                </div>
+                                <h3 class="text-2xl font-bold ${passed ? 'text-green-600' : 'text-red-600'} mb-2">
+                                    ${passed ? '🎉 LULUS!' : '😔 Belum Lulus'}
+                                </h3>
+                                <p class="text-gray-600">Evaluasi Qadha dan Qadar</p>
+                            </div>
+                            
+                            <div class="bg-gray-50 rounded-xl p-4 mb-6">
+                                <div class="text-4xl font-bold ${passed ? 'text-green-600' : 'text-red-600'} mb-2">
+                                    ${finalScore.toFixed(0)}
+                                </div>
+                                <div class="text-sm text-gray-600 mb-4">Nilai Akhir</div>
+                                
+                                <div class="space-y-2 text-sm">
+                                    <div class="flex justify-between">
+                                        <span>Jawaban Benar:</span>
+                                        <span class="font-bold">${score} dari ${evaluationQuestions.length}</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span>Nilai Minimum:</span>
+                                        <span class="font-bold">70</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span>Status:</span>
+                                        <span class="font-bold ${passed ? 'text-green-600' : 'text-red-600'}">
+                                            ${passed ? 'LULUS' : 'BELUM LULUS'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="text-sm text-gray-600 mb-6">
+                                ${passed ? 
+                                    '🎊 Selamat! Anda telah memahami materi Qadha dan Qadar dengan baik.' : 
+                                    '📚 Pelajari kembali materi dan coba lagi. Anda masih memiliki 2 kesempatan lagi.'
+                                }
+                            </div>
+                            
+                            <div class="flex space-x-3">
+                                <button onclick="closeEvaluationResults()" class="flex-1 px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">Tutup</button>
+                                ${!passed ? '<button onclick="retryEvaluation()" class="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">Coba Lagi</button>' : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+                document.body.insertAdjacentHTML('beforeend', resultsHTML);
+            }
+
+            window.closeEvaluationResults = function() {
+                const resultsModal = document.querySelector('.fixed.inset-0.bg-gradient-to-br');
+                if (resultsModal) resultsModal.remove();
+            };
+
+            window.retryEvaluation = function() {
+                closeEvaluationResults();
+                startEvaluasi();
+            };
+
+            showEvaluationQuestion();
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            
+            if (message && window.FirebaseService) {
+                window.FirebaseService.sendChatMessage(message);
+                input.value = '';
+            }
+        }
+
+        function sendQuickMessage(message) {
+            if (window.FirebaseService) {
+                window.FirebaseService.sendChatMessage(message);
+            }
+        }
+
+        function handleEnter(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        // Close modal when clicking outside
+        document.addEventListener('click', function(event) {
+            const modal = document.getElementById('materiModal');
+            if (event.target === modal) {
+                closeMateri();
+            }
+        });
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            showPage('homePage');
+            
+            // Initialize Firebase listeners
+            setTimeout(() => {
+                initializeFirebaseListeners();
+            }, 2000);
+        });
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (chatUnsubscribe) chatUnsubscribe();
+            if (onlineUsersUnsubscribe) onlineUsersUnsubscribe();
+            if (currentRaceUnsubscribe) currentRaceUnsubscribe();
+            
+            if (window.FirebaseService) {
+                window.FirebaseService.setUserOffline();
+            }
+        });
+    </script>
+
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'97733e8247b1fd2b',t:'MTc1NjU0NTk2MS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
