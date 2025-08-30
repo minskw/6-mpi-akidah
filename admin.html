@@ -1,0 +1,1411 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kelola Hasil Evaluasi - Qadha dan Qadar</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, limit, serverTimestamp, doc, setDoc, getDoc, updateDoc, deleteDoc, getDocs, where } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+        import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+
+        // ✅ KONFIGURASI FIREBASE ANDA
+        const firebaseConfig = {
+            apiKey: "AIzaSyBhWK2ev0KUGZ3xORv7M3tsQxivjFoZsTw",
+            authDomain: "new-mpi-90fb2.firebaseapp.com",
+            projectId: "new-mpi-90fb2",
+            storageBucket: "new-mpi-90fb2.firebasestorage.app",
+            messagingSenderId: "351432907492",
+            appId: "1:351432907492:web:88ee8464f4c0b49d866af1"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        // Global variables
+        window.db = db;
+        window.auth = auth;
+        window.currentUser = null;
+
+        // Authentication
+        signInAnonymously(auth).then(() => {
+            console.log('✅ Firebase connected successfully');
+        }).catch((error) => {
+            console.error('❌ Firebase connection failed:', error);
+            alert('Koneksi Firebase gagal. Periksa konfigurasi Anda.');
+        });
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                window.currentUser = user;
+                initializeUserProfile();
+            }
+        });
+
+        // Initialize user profile
+        async function initializeUserProfile() {
+            const userRef = doc(db, 'users', currentUser.uid);
+            const userSnap = await getDoc(userRef);
+            
+            if (!userSnap.exists()) {
+                await setDoc(userRef, {
+                    name: 'Siswa Baru',
+                    photo: '',
+                    class: '6A',
+                    totalScore: 0,
+                    racesPlayed: 0,
+                    accuracy: 0,
+                    lastActive: serverTimestamp(),
+                    isOnline: true,
+                    role: 'student' // Default role
+                });
+            } else {
+                await updateDoc(userRef, {
+                    lastActive: serverTimestamp(),
+                    isOnline: true
+                });
+                
+                // Update header with user data
+                const userData = userSnap.data();
+                const avatar = userData.photo && userData.photo.startsWith('data:image') 
+                    ? `<img src="${userData.photo}" class="w-full h-full object-cover rounded-full">`
+                    : (userData.photo || '👤');
+                updateHeaderProfile({ name: userData.name, avatar: avatar });
+                
+                // Check if user is teacher/admin
+                if (userData.role === 'teacher' || userData.role === 'admin') {
+                    document.getElementById('teacherMenu').classList.remove('hidden');
+                    document.getElementById('adminTab').classList.remove('hidden');
+                }
+            }
+        }
+
+        // Update header profile display
+        function updateHeaderProfile(userData) {
+            const headerName = document.getElementById('headerName');
+            const headerAvatar = document.getElementById('headerAvatar');
+            
+            if (headerName && userData.name) {
+                headerName.textContent = userData.name;
+            }
+            
+            if (headerAvatar && userData.avatar) {
+                if (userData.avatar.startsWith('<img')) {
+                    headerAvatar.innerHTML = userData.avatar;
+                } else {
+                    headerAvatar.textContent = userData.avatar;
+                }
+            }
+        }
+
+        // Export functions to global scope
+        window.FirebaseService = {
+            // Get evaluation results
+            getEvaluationResults: async (classFilter = null, dateFilter = null) => {
+                try {
+                    let q;
+                    if (classFilter && classFilter !== 'all') {
+                        q = query(
+                            collection(db, 'evaluationResults'),
+                            where('class', '==', classFilter),
+                            orderBy('timestamp', 'desc')
+                        );
+                    } else {
+                        q = query(
+                            collection(db, 'evaluationResults'),
+                            orderBy('timestamp', 'desc')
+                        );
+                    }
+                    
+                    const snapshot = await getDocs(q);
+                    const results = [];
+                    snapshot.forEach((doc) => {
+                        const data = doc.data();
+                        // Apply date filter if provided
+                        if (dateFilter) {
+                            const resultDate = data.timestamp?.toDate().toDateString();
+                            const filterDate = new Date(dateFilter).toDateString();
+                            if (resultDate === filterDate) {
+                                results.push({ id: doc.id, ...data });
+                            }
+                        } else {
+                            results.push({ id: doc.id, ...data });
+                        }
+                    });
+                    return results;
+                } catch (error) {
+                    console.error('Error getting evaluation results:', error);
+                    return [];
+                }
+            },
+
+            // Get race results
+            getRaceResults: async (classFilter = null, dateFilter = null) => {
+                try {
+                    let q = query(
+                        collection(db, 'raceResults'),
+                        orderBy('timestamp', 'desc')
+                    );
+                    
+                    const snapshot = await getDocs(q);
+                    const results = [];
+                    snapshot.forEach((doc) => {
+                        const data = doc.data();
+                        // Apply class filter if provided
+                        if (classFilter && classFilter !== 'all' && data.class !== classFilter) {
+                            return;
+                        }
+                        
+                        // Apply date filter if provided
+                        if (dateFilter) {
+                            const resultDate = data.timestamp?.toDate().toDateString();
+                            const filterDate = new Date(dateFilter).toDateString();
+                            if (resultDate === filterDate) {
+                                results.push({ id: doc.id, ...data });
+                            }
+                        } else {
+                            results.push({ id: doc.id, ...data });
+                        }
+                    });
+                    return results;
+                } catch (error) {
+                    console.error('Error getting race results:', error);
+                    return [];
+                }
+            },
+
+            // Get all results (both evaluation and race)
+            getAllResults: async (classFilter = null, dateFilter = null, typeFilter = 'all') => {
+                try {
+                    const [evaluationResults, raceResults] = await Promise.all([
+                        window.FirebaseService.getEvaluationResults(classFilter, dateFilter),
+                        window.FirebaseService.getRaceResults(classFilter, dateFilter)
+                    ]);
+                    
+                    let allResults = [
+                        ...evaluationResults.map(r => ({ ...r, type: 'evaluation' })),
+                        ...raceResults.map(r => ({ ...r, type: 'race' }))
+                    ];
+                    
+                    // Apply type filter
+                    if (typeFilter !== 'all') {
+                        allResults = allResults.filter(result => result.type === typeFilter);
+                    }
+                    
+                    return allResults;
+                } catch (error) {
+                    console.error('Error getting all results:', error);
+                    return [];
+                }
+            },
+
+            // Get user data
+            getUserData: async (userId) => {
+                try {
+                    const userRef = doc(db, 'users', userId);
+                    const userSnap = await getDoc(userRef);
+                    if (userSnap.exists()) {
+                        return userSnap.data();
+                    }
+                    return null;
+                } catch (error) {
+                    console.error('Error getting user data:', error);
+                    return null;
+                }
+            },
+
+            // Update evaluation result
+            updateEvaluationResult: async (resultId, updates) => {
+                try {
+                    const resultRef = doc(db, 'evaluationResults', resultId);
+                    await updateDoc(resultRef, updates);
+                    return true;
+                } catch (error) {
+                    console.error('Error updating evaluation result:', error);
+                    return false;
+                }
+            },
+
+            // Delete evaluation result
+            deleteEvaluationResult: async (resultId) => {
+                try {
+                    await deleteDoc(doc(db, 'evaluationResults', resultId));
+                    return true;
+                } catch (error) {
+                    console.error('Error deleting evaluation result:', error);
+                    return false;
+                }
+            },
+
+            // Delete race result
+            deleteRaceResult: async (resultId) => {
+                try {
+                    await deleteDoc(doc(db, 'raceResults', resultId));
+                    return true;
+                } catch (error) {
+                    console.error('Error deleting race result:', error);
+                    return false;
+                }
+            },
+
+            // Get all classes
+            getClasses: async () => {
+                try {
+                    const q = query(collection(db, 'users'));
+                    const snapshot = await getDocs(q);
+                    const classes = new Set();
+                    
+                    snapshot.forEach((doc) => {
+                        const userData = doc.data();
+                        if (userData.class) {
+                            classes.add(userData.class);
+                        }
+                    });
+                    
+                    return Array.from(classes).sort();
+                } catch (error) {
+                    console.error('Error getting classes:', error);
+                    return [];
+                }
+            },
+
+            // Get all students
+            getStudents: async (classFilter = null) => {
+                try {
+                    let q;
+                    if (classFilter && classFilter !== 'all') {
+                        q = query(
+                            collection(db, 'users'),
+                            where('class', '==', classFilter),
+                            where('role', '==', 'student')
+                        );
+                    } else {
+                        q = query(
+                            collection(db, 'users'),
+                            where('role', '==', 'student')
+                        );
+                    }
+                    
+                    const snapshot = await getDocs(q);
+                    const students = [];
+                    snapshot.forEach((doc) => {
+                        students.push({ id: doc.id, ...doc.data() });
+                    });
+                    return students;
+                } catch (error) {
+                    console.error('Error getting students:', error);
+                    return [];
+                }
+            },
+
+            // Update student data
+            updateStudent: async (studentId, updates) => {
+                try {
+                    const studentRef = doc(db, 'users', studentId);
+                    await updateDoc(studentRef, updates);
+                    return true;
+                } catch (error) {
+                    console.error('Error updating student:', error);
+                    return false;
+                }
+            },
+
+            // Cleanup on page unload
+            setUserOffline: async () => {
+                if (currentUser) {
+                    try {
+                        const userRef = doc(db, 'users', currentUser.uid);
+                        await updateDoc(userRef, {
+                            isOnline: false,
+                            lastActive: serverTimestamp()
+                        });
+                    } catch (error) {
+                        console.error('Error setting user offline:', error);
+                    }
+                }
+            }
+        };
+
+        // Set user offline when page is closed
+        window.addEventListener('beforeunload', () => {
+            window.FirebaseService.setUserOffline();
+        });
+    </script>
+
+    <style>
+        .islamic-pattern {
+            background-image: 
+                radial-gradient(circle at 25% 25%, rgba(13, 142, 75, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 75% 75%, rgba(26, 185, 109, 0.1) 0%, transparent 50%);
+        }
+        
+        .body-pattern {
+            background-image: 
+                radial-gradient(circle at 20% 80%, rgba(13, 142, 75, 0.05) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(26, 185, 109, 0.05) 0%, transparent 50%);
+        }
+        
+        .card-hover {
+            transition: all 0.3s ease;
+        }
+        
+        .card-hover:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(13, 142, 75, 0.15);
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .firebase-status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .firebase-connected {
+            background: #10B981;
+            color: white;
+        }
+
+        .firebase-disconnected {
+            background: #EF4444;
+            color: white;
+        }
+
+        .score-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .score-high {
+            background-color: #10B981;
+            color: white;
+        }
+
+        .score-medium {
+            background-color: #F59E0B;
+            color: white;
+        }
+
+        .score-low {
+            background-color: #EF4444;
+            color: white;
+        }
+
+        .stats-card {
+            transition: all 0.3s ease;
+        }
+
+        .stats-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        }
+
+        .tab-button {
+            transition: all 0.3s ease;
+            border-bottom: 3px solid transparent;
+        }
+
+        .tab-button.active {
+            border-bottom-color: #0D8E4B;
+            color: #0D8E4B;
+            font-weight: bold;
+        }
+
+        .type-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .type-evaluation {
+            background-color: #8B5CF6;
+            color: white;
+        }
+
+        .type-race {
+            background-color: #EC4899;
+            color: white;
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-islamic-light via-islamic-pale to-islamic-bg min-h-screen body-pattern pb-20">
+
+    <!-- Firebase Status Indicator -->
+    <div id="firebaseStatus" class="firebase-status firebase-disconnected">
+        <i class="fas fa-circle mr-1"></i>
+        Connecting...
+    </div>
+
+    <!-- Header -->
+    <header class="bg-gradient-to-r from-[#20B2AA] via-[#40E0D0] to-[#20B2AA] shadow-lg sticky top-0 z-40">
+        <div class="flex items-center justify-between px-4 py-4">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 shadow-md">
+                  <img src="https://archive.org/download/ms-10_202508/MS%20%2810%29.png" 
+                       alt="Logo" class="w-full h-full object-contain">
+                </div>
+                <div>
+                    <h1 class="text-lg font-bold text-white drop-shadow-sm">Kelola Hasil Evaluasi</h1>
+                    <p class="text-xs text-white opacity-95">Qadha & Qadar - PAI Kelas 5</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-2" onclick="showProfile()">
+                <div class="w-8 h-8 bg-white bg-opacity-20 rounded-full flex items-center justify-center shadow-md cursor-pointer">
+                    <span class="text-lg text-white" id="headerAvatar">👤</span>
+                </div>
+                <div class="text-white text-xs">
+                    <div class="font-semibold" id="headerName">Siswa Baru</div>
+                    <div class="opacity-75 flex items-center">
+                        <div class="w-2 h-2 bg-green-400 rounded-full mr-1"></div>
+                        <span id="connectionStatus">Online</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="p-4">
+        
+        <!-- Teacher Menu (Hidden by default) -->
+        <div id="teacherMenu" class="hidden mb-6">
+            <div class="bg-white bg-opacity-95 backdrop-blur-sm rounded-2xl p-4 shadow-lg islamic-pattern">
+                <h2 class="text-lg font-bold text-islamic-green mb-3">Menu Guru</h2>
+                <div class="grid grid-cols-2 gap-3">
+                    <button onclick="showTab('results')" class="p-3 bg-islamic-pale rounded-lg text-center hover:bg-islamic-light hover:text-white transition-all">
+                        <i class="fas fa-chart-bar text-xl mb-2"></i>
+                        <div class="font-semibold text-sm">Hasil Evaluasi</div>
+                    </button>
+                    <button onclick="showTab('students')" class="p-3 bg-blue-50 rounded-lg text-center hover:bg-blue-500 hover:text-white transition-all">
+                        <i class="fas fa-users text-xl mb-2"></i>
+                        <div class="font-semibold text-sm">Kelola Siswa</div>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tabs Navigation -->
+        <div class="bg-white bg-opacity-95 backdrop-blur-sm rounded-2xl p-4 shadow-lg mb-6 islamic-pattern">
+            <div class="flex space-x-4 border-b">
+                <button id="resultsTab" class="tab-button active py-2 px-4" onclick="showTab('results')">
+                    <i class="fas fa-chart-bar mr-2"></i>Hasil Evaluasi & Race
+                </button>
+                <button id="studentsTab" class="tab-button py-2 px-4" onclick="showTab('students')">
+                    <i class="fas fa-users mr-2"></i>Kelola Siswa
+                </button>
+                <button id="adminTab" class="tab-button py-2 px-4 hidden" onclick="showTab('admin')">
+                    <i class="fas fa-cog mr-2"></i>Admin
+                </button>
+            </div>
+        </div>
+
+        <!-- Results Tab -->
+        <div id="resultsTabContent" class="fade-in">
+            <!-- Page Header -->
+            <div class="bg-white bg-opacity-95 backdrop-blur-sm rounded-2xl p-6 shadow-lg mb-6 islamic-pattern">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 class="text-xl font-bold text-islamic-green flex items-center">
+                            <i class="fas fa-chart-bar mr-3"></i>
+                            Hasil Evaluasi & Race Siswa
+                        </h2>
+                        <p class="text-sm text-gray-600">Kelola dan pantau hasil evaluasi dan race siswa</p>
+                    </div>
+                    <button onclick="refreshResults()" class="bg-islamic-green text-white p-2 rounded-lg hover:bg-islamic-light transition-all">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
+
+                <!-- Filters -->
+                <div class="bg-gray-50 rounded-xl p-4 mb-4">
+                    <h3 class="font-semibold text-gray-700 mb-3">Filter Data</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Kelas</label>
+                            <select id="classFilter" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-islamic-green focus:border-transparent">
+                                <option value="all">Semua Kelas</option>
+                                <option value="6A">Kelas 6A</option>
+                                <option value="6B">Kelas 6B</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Tanggal</label>
+                            <input type="date" id="dateFilter" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-islamic-green focus:border-transparent">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                            <select id="statusFilter" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-islamic-green focus:border-transparent">
+                                <option value="all">Semua Status</option>
+                                <option value="passed">Lulus</option>
+                                <option value="failed">Belum Lulus</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Jenis</label>
+                            <select id="typeFilter" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-islamic-green focus:border-transparent">
+                                <option value="all">Semua Jenis</option>
+                                <option value="evaluation">Evaluasi</option>
+                                <option value="race">Race</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button onclick="applyFilters()" class="mt-3 w-full bg-islamic-green text-white py-2 rounded-lg font-semibold hover:bg-islamic-light transition-all">
+                        <i class="fas fa-filter mr-2"></i>Terapkan Filter
+                    </button>
+                </div>
+
+                <!-- Statistics -->
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6" id="statsContainer">
+                    <div class="bg-gradient-to-r from-green-500 to-green-600 text-white rounded-xl p-4 text-center stats-card">
+                        <div class="text-3xl font-bold" id="totalStudents">0</div>
+                        <div class="text-sm">Total Siswa</div>
+                    </div>
+                    <div class="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl p-4 text-center stats-card">
+                        <div class="text-3xl font-bold" id="averageScore">0</div>
+                        <div class="text-sm">Rata-rata Nilai</div>
+                    </div>
+                    <div class="bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-xl p-4 text-center stats-card">
+                        <div class="text-3xl font-bold" id="passRate">0%</div>
+                        <div class="text-sm">Tingkat Kelulusan</div>
+                    </div>
+                    <div class="bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl p-4 text-center stats-card">
+                        <div class="text-3xl font-bold" id="totalEvaluations">0</div>
+                        <div class="text-sm">Total Evaluasi</div>
+                    </div>
+                </div>
+
+                <!-- Results Table -->
+                <div class="bg-white rounded-xl shadow overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nama Siswa</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Kelas</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Jenis</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nilai</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tanggal</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200" id="resultsTableBody">
+                                <tr>
+                                    <td colspan="7" class="px-4 py-4 text-center text-gray-500">
+                                        <i class="fas fa-spinner fa-spin mr-2"></i>Memuat data...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Students Tab -->
+        <div id="studentsTabContent" class="hidden fade-in">
+            <div class="bg-white bg-opacity-95 backdrop-blur-sm rounded-2xl p-6 shadow-lg">
+                <h2 class="text-xl font-bold text-islamic-green mb-4 flex items-center">
+                    <i class="fas fa-users mr-3"></i>
+                    Kelola Data Siswa
+                </h2>
+
+                <!-- Filters -->
+                <div class="bg-gray-50 rounded-xl p-4 mb-6">
+                    <h3 class="font-semibold text-gray-700 mb-3">Filter Siswa</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Kelas</label>
+                            <select id="studentClassFilter" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-islamic-green focus:border-transparent">
+                                <option value="all">Semua Kelas</option>
+                                <option value="6A">Kelas 6A</option>
+                                <option value="6B">Kelas 6B</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Cari Siswa</label>
+                            <input type="text" id="studentSearch" placeholder="Nama siswa..." class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-islamic-green focus:border-transparent">
+                        </div>
+                    </div>
+                    <button onclick="loadStudents()" class="mt-3 w-full bg-islamic-green text-white py-2 rounded-lg font-semibold hover:bg-islamic-light transition-all">
+                        <i class="fas fa-filter mr-2"></i>Terapkan Filter
+                    </button>
+                </div>
+
+                <!-- Students Table -->
+                <div class="bg-white rounded-xl shadow overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nama Siswa</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Kelas</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Poin</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Race Dimainkan</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Akurasi</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200" id="studentsTableBody">
+                                <tr>
+                                    <td colspan="6" class="px-4 py-4 text-center text-gray-500">
+                                        <i class="fas fa-spinner fa-spin mr-2"></i>Memuat data siswa...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Admin Tab -->
+        <div id="adminTabContent" class="hidden fade-in">
+            <div class="bg-white bg-opacity-95 backdrop-blur-sm rounded-2xl p-6 shadow-lg">
+                <h2 class="text-xl font-bold text-islamic-green mb-4 flex items-center">
+                    <i class="fas fa-cog mr-3"></i>
+                    Panel Admin
+                </h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                    <!-- Data Management -->
+                    <div class="bg-gray-50 rounded-xl p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3">Manajemen Data</h3>
+                        <div class="space-y-2">
+                            <button onclick="exportData()" class="w-full bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600 transition-all">
+                                <i class="fas fa-download mr-2"></i>Ekspor Data
+                            </button>
+                            <button onclick="importData()" class="w-full bg-green-500 text-white py-2 rounded-lg hover:bg-green-600 transition-all">
+                                <i class="fas fa-upload mr-2"></i>Impor Data
+                            </button>
+                            <button onclick="clearAllData()" class="w-full bg-red-500 text-white py-2 rounded-lg hover:bg-red-600 transition-all">
+                                <i class="fas fa-trash mr-2"></i>Hapus Semua Data
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- System Settings -->
+                    <div class="bg-gray-50 rounded-xl p-4">
+                        <h3 class="font-semibold text-gray-700 mb-3">Pengaturan Sistem</h3>
+                        <div class="space-y-2">
+                            <button onclick="manageUsers()" class="w-full bg-purple-500 text-white py-2 rounded-lg hover:bg-purple-600 transition-all">
+                                <i class="fas fa-user-cog mr-2"></i>Kelola Pengguna
+                            </button>
+                            <button onclick="systemSettings()" class="w-full bg-yellow-500 text-white py-2 rounded-lg hover:bg-yellow-600 transition-all">
+                                <i class="fas fa-cogs mr-2"></i>Pengaturan Sistem
+                            </button>
+                            <button onclick="backupData()" class="w-full bg-indigo-500 text-white py-2 rounded-lg hover:bg-indigo-600 transition-all">
+                                <i class="fas fa-database mr-2"></i>Backup Data
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded">
+                    <div class="flex">
+                        <div class="flex-shrink-0">
+                            <i class="fas fa-info-circle text-yellow-400"></i>
+                        </div>
+                        <div class="ml-3">
+                            <p class="text-sm text-yellow-700">
+                                <strong>Panel Admin</strong>. Hanya pengguna dengan peran admin yang dapat mengakses fitur ini.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Bottom Navigation -->
+    <nav class="fixed bottom-0 left-0 right-0 bg-white shadow-lg border-t border-gray-200 z-50">
+        <div class="flex justify-around py-2">
+            <button onclick="showPage('homePage')" class="nav-btn flex flex-col items-center py-2 px-4 text-gray-500">
+                <i class="fas fa-home text-xl mb-1"></i>
+                <span class="text-xs font-medium">Beranda</span>
+            </button>
+            <button onclick="showTab('results')" class="nav-btn flex flex-col items-center py-2 px-4 text-islamic-green">
+                <i class="fas fa-chart-bar text-xl mb-1"></i>
+                <span class="text-xs font-medium">Hasil</span>
+            </button>
+            <button onclick="showTab('students')" class="nav-btn flex flex-col items-center py-2 px-4 text-gray-500">
+                <i class="fas fa-users text-xl mb-1"></i>
+                <span class="text-xs font-medium">Siswa</span>
+            </button>
+            <button onclick="showProfile()" class="nav-btn flex flex-col items-center py-2 px-4 text-gray-500">
+                <i class="fas fa-user text-xl mb-1"></i>
+                <span class="text-xs font-medium">Profil</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Result Detail Modal -->
+    <div id="resultDetailModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl p-6 max-w-2xl w-full mx-4 max-h-96 overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-bold text-islamic-green" id="detailStudentName">Detail Hasil Evaluasi</h3>
+                <button onclick="closeResultDetail()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            <div id="resultDetailContent">
+                <!-- Content will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Student Detail Modal -->
+    <div id="studentDetailModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl p-6 max-w-2xl w-full mx-4 max-h-96 overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-bold text-islamic-green" id="detailStudentName">Detail Siswa</h3>
+                <button onclick="closeStudentDetail()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            <div id="studentDetailContent">
+                <!-- Content will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let currentResults = [];
+        let currentStudents = [];
+        let currentFilters = {
+            class: 'all',
+            date: null,
+            status: 'all',
+            type: 'all'
+        };
+
+        // Firebase connection status
+        function updateFirebaseStatus(connected) {
+            const statusElement = document.getElementById('firebaseStatus');
+            const connectionStatus = document.getElementById('connectionStatus');
+            
+            if (connected) {
+                statusElement.className = 'firebase-status firebase-connected';
+                statusElement.innerHTML = '<i class="fas fa-circle mr-1"></i>Connected';
+                if (connectionStatus) connectionStatus.textContent = 'Online';
+            } else {
+                statusElement.className = 'firebase-status firebase-disconnected';
+                statusElement.innerHTML = '<i class="fas fa-circle mr-1"></i>Disconnected';
+                if (connectionStatus) connectionStatus.textContent = 'Offline';
+            }
+        }
+
+        // Show specific tab
+        function showTab(tabName) {
+            // Hide all tab contents
+            document.getElementById('resultsTabContent').classList.add('hidden');
+            document.getElementById('studentsTabContent').classList.add('hidden');
+            document.getElementById('adminTabContent').classList.add('hidden');
+            
+            // Remove active class from all tabs
+            document.getElementById('resultsTab').classList.remove('active');
+            document.getElementById('studentsTab').classList.remove('active');
+            document.getElementById('adminTab').classList.remove('active');
+            
+            // Show selected tab and set active class
+            if (tabName === 'results') {
+                document.getElementById('resultsTabContent').classList.remove('hidden');
+                document.getElementById('resultsTab').classList.add('active');
+                loadEvaluationResults();
+            } else if (tabName === 'students') {
+                document.getElementById('studentsTabContent').classList.remove('hidden');
+                document.getElementById('studentsTab').classList.add('active');
+                loadStudents();
+            } else if (tabName === 'admin') {
+                document.getElementById('adminTabContent').classList.remove('hidden');
+                document.getElementById('adminTab').classList.add('active');
+            }
+        }
+
+        // Load evaluation results
+        async function loadEvaluationResults() {
+            try {
+                if (!window.FirebaseService) {
+                    setTimeout(loadEvaluationResults, 1000);
+                    return;
+                }
+
+                const results = await window.FirebaseService.getAllResults(
+                    currentFilters.class !== 'all' ? currentFilters.class : null,
+                    currentFilters.date,
+                    currentFilters.type !== 'all' ? currentFilters.type : null
+                );
+
+                currentResults = results;
+                displayResults(results);
+                updateStatistics(results);
+            } catch (error) {
+                console.error('Error loading evaluation results:', error);
+                document.getElementById('resultsTableBody').innerHTML = `
+                    <tr>
+                        <td colspan="7" class="px-4 py-4 text-center text-red-500">
+                            <i class="fas fa-exclamation-circle mr-2"></i>Gagal memuat data
+                        </td>
+                    </tr>
+                `;
+            }
+        }
+
+        // Display results in table
+        function displayResults(results) {
+            const tbody = document.getElementById('resultsTableBody');
+            
+            if (results.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="px-4 py-4 text-center text-gray-500">
+                            <i class="fas fa-inbox mr-2"></i>Tidak ada data hasil evaluasi
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            // Apply status filter
+            let filteredResults = results;
+            if (currentFilters.status !== 'all') {
+                filteredResults = results.filter(result => {
+                    const passed = result.score >= 70;
+                    return currentFilters.status === 'passed' ? passed : !passed;
+                });
+            }
+
+            tbody.innerHTML = filteredResults.map(result => {
+                const date = result.timestamp?.toDate?.() || new Date();
+                const dateString = date.toLocaleDateString('id-ID');
+                const timeString = date.toLocaleTimeString('id-ID', { 
+                    hour: '2-digit', 
+                    minute: '2-digit' 
+                });
+                
+                const passed = result.score >= 70;
+                const scoreClass = passed ? 'score-high' : (result.score >= 50 ? 'score-medium' : 'score-low');
+                const typeClass = result.type === 'evaluation' ? 'type-evaluation' : 'type-race';
+                
+                return `
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-4 py-4 whitespace-nowrap">
+                            <div class="flex items-center">
+                                <div class="flex-shrink-0 h-10 w-10">
+                                    <div class="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center">
+                                        ${result.studentAvatar || '👤'}
+                                    </div>
+                                </div>
+                                <div class="ml-4">
+                                    <div class="text-sm font-medium text-gray-900">${result.studentName}</div>
+                                    <div class="text-sm text-gray-500">${result.studentId || 'ID tidak tersedia'}</div>
+                                </div>
+                            </div>
+                        </td>
+                        <td class="px-4 py-4 whitespace-nowrap">
+                            <div class="text-sm text-gray-900">${result.class || 'Tidak diketahui'}</div>
+                        </td>
+                        <td class="px-4 py-4 whitespace-nowrap">
+                            <span class="type-badge ${typeClass}">${result.type === 'evaluation' ? 'Evaluasi' : 'Race'}</span>
+                        </td>
+                        <td class="px-4 py-4 whitespace-nowrap">
+                            <span class="score-badge ${scoreClass}">${result.score}</span>
+                        </td>
+                        <td class="px-4 py-4 whitespace-nowrap">
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${passed ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                                ${passed ? 'Lulus' : 'Belum Lulus'}
+                            </span>
+                        </td>
+                        <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                            ${dateString} ${timeString}
+                        </td>
+                        <td class="px-4 py-4 whitespace-nowrap text-sm font-medium">
+                            <button onclick="viewResultDetail('${result.id}', '${result.type}')" class="text-islamic-green hover:text-islamic-light mr-3">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                            <button onclick="deleteResult('${result.id}', '${result.type}')" class="text-red-600 hover:text-red-900">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // Update statistics
+        function updateStatistics(results) {
+            if (results.length === 0) {
+                document.getElementById('totalStudents').textContent = '0';
+                document.getElementById('averageScore').textContent = '0';
+                document.getElementById('passRate').textContent = '0%';
+                document.getElementById('totalEvaluations').textContent = '0';
+                return;
+            }
+
+            // Calculate statistics
+            const totalEvaluations = results.length;
+            
+            // Count unique students
+            const studentIds = new Set();
+            results.forEach(result => {
+                if (result.studentId) studentIds.add(result.studentId);
+            });
+            const totalStudents = studentIds.size;
+            
+            // Calculate average score
+            const totalScore = results.reduce((sum, result) => sum + result.score, 0);
+            const averageScore = Math.round(totalScore / totalEvaluations);
+            
+            // Calculate pass rate
+            const passedCount = results.filter(result => result.score >= 70).length;
+            const passRate = Math.round((passedCount / totalEvaluations) * 100);
+
+            // Update DOM
+            document.getElementById('totalStudents').textContent = totalStudents;
+            document.getElementById('averageScore').textContent = averageScore;
+            document.getElementById('passRate').textContent = `${passRate}%`;
+            document.getElementById('totalEvaluations').textContent = totalEvaluations;
+        }
+
+        // Apply filters
+        function applyFilters() {
+            currentFilters.class = document.getElementById('classFilter').value;
+            currentFilters.date = document.getElementById('dateFilter').value;
+            currentFilters.status = document.getElementById('statusFilter').value;
+            currentFilters.type = document.getElementById('typeFilter').value;
+            
+            loadEvaluationResults();
+        }
+
+        // Refresh results
+        function refreshResults() {
+            loadEvaluationResults();
+        }
+
+        // View result detail
+        async function viewResultDetail(resultId, resultType) {
+            const result = currentResults.find(r => r.id === resultId && r.type === resultType);
+            if (!result) return;
+            
+            const date = result.timestamp?.toDate?.() || new Date();
+            const dateString = date.toLocaleDateString('id-ID', { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric' 
+            });
+            const timeString = date.toLocaleTimeString('id-ID', { 
+                hour: '2-digit', 
+                minute: '2-digit' 
+            });
+            
+            const passed = result.score >= 70;
+            
+            document.getElementById('detailStudentName').textContent = `Hasil ${resultType === 'evaluation' ? 'Evaluasi' : 'Race'} - ${result.studentName}`;
+            
+            let detailContent = `
+                <div class="space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-gray-50 p-3 rounded-lg">
+                            <div class="text-sm text-gray-600">Nama Siswa</div>
+                            <div class="font-semibold">${result.studentName}</div>
+                        </div>
+                        <div class="bg-gray-50 p-3 rounded-lg">
+                            <div class="text-sm text-gray-600">Kelas</div>
+                            <div class="font-semibold">${result.class || 'Tidak diketahui'}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-gray-50 p-3 rounded-lg">
+                            <div class="text-sm text-gray-600">Jenis Tes</div>
+                            <div class="font-semibold">${resultType === 'evaluation' ? 'Evaluasi' : 'Race'}</div>
+                        </div>
+                        <div class="bg-gray-50 p-3 rounded-lg">
+                            <div class="text-sm text-gray-600">Nilai</div>
+                            <div class="font-semibold text-2xl ${passed ? 'text-green-600' : 'text-red-600'}">${result.score}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-gray-50 p-3 rounded-lg">
+                            <div class="text-sm text-gray-600">Status</div>
+                            <div class="font-semibold">
+                                <span class="px-2 py-1 rounded-full ${passed ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                                    ${passed ? 'Lulus' : 'Belum Lulus'}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="bg-gray-50 p-3 rounded-lg">
+                            <div class="text-sm text-gray-600">Waktu Pengerjaan</div>
+                            <div class="font-semibold">${dateString} pukul ${timeString}</div>
+                        </div>
+                    </div>
+            `;
+            
+            if (resultType === 'evaluation' && result.details) {
+                detailContent += `
+                    <div class="bg-gray-50 p-3 rounded-lg">
+                        <div class="text-sm text-gray-600 mb-2">Detail Jawaban</div>
+                        <div class="space-y-2">
+                            ${result.details.map((detail, index) => `
+                                <div class="p-2 ${detail.correct ? 'bg-green-50 border-l-4 border-green-400' : 'bg-red-50 border-l-4 border-red-400'}">
+                                    <div class="font-medium">Soal ${index + 1}: ${detail.question}</div>
+                                    <div class="text-sm">Jawaban: ${detail.answer} ${detail.correct ? '✅' : '❌'}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            } else if (resultType === 'race') {
+                detailContent += `
+                    <div class="bg-gray-50 p-3 rounded-lg">
+                        <div class="text-sm text-gray-600 mb-2">Detail Race</div>
+                        <div class="space-y-2">
+                            <div class="grid grid-cols-2 gap-2">
+                                <div class="font-medium">Jumlah Soal:</div>
+                                <div>${result.totalQuestions || 10}</div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div class="font-medium">Jawaban Benar:</div>
+                                <div>${result.correctAnswers || Math.round(result.score/100)}</div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div class="font-medium">Waktu:</div>
+                                <div>${result.timeSpent || 'Tidak diketahui'}</div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div class="font-medium">Peringkat:</div>
+                                <div>${result.rank || 'Tidak diketahui'}</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            detailContent += `</div>`;
+            
+            document.getElementById('resultDetailContent').innerHTML = detailContent;
+            document.getElementById('resultDetailModal').classList.remove('hidden');
+        }
+
+        // Close result detail
+        function closeResultDetail() {
+            document.getElementById('resultDetailModal').classList.add('hidden');
+        }
+
+        // Delete result
+        async function deleteResult(resultId, resultType) {
+            if (!confirm('Apakah Anda yakin ingin menghapus hasil ini?')) return;
+            
+            try {
+                if (window.FirebaseService) {
+                    let success = false;
+                    if (resultType === 'evaluation') {
+                        success = await window.FirebaseService.deleteEvaluationResult(resultId);
+                    } else {
+                        success = await window.FirebaseService.deleteRaceResult(resultId);
+                    }
+                    
+                    if (success) {
+                        alert('Hasil berhasil dihapus');
+                        loadEvaluationResults();
+                    } else {
+                        alert('Gagal menghapus hasil');
+                    }
+                }
+            } catch (error) {
+                console.error('Error deleting result:', error);
+                alert('Terjadi kesalahan saat menghapus hasil');
+            }
+        }
+
+        // Load students
+        async function loadStudents() {
+            try {
+                if (!window.FirebaseService) {
+                    setTimeout(loadStudents, 1000);
+                    return;
+                }
+
+                const classFilter = document.getElementById('studentClassFilter').value;
+                const searchTerm = document.getElementById('studentSearch').value.toLowerCase();
+                
+                const students = await window.FirebaseService.getStudents(
+                    classFilter !== 'all' ? classFilter : null
+                );
+                
+                // Apply search filter
+                let filteredStudents = students;
+                if (searchTerm) {
+                    filteredStudents = students.filter(student => 
+                        student.name.toLowerCase().includes(searchTerm)
+                    );
+                }
+                
+                currentStudents = filteredStudents;
+                displayStudents(filteredStudents);
+            } catch (error) {
+                console.error('Error loading students:', error);
+                document.getElementById('studentsTableBody').innerHTML = `
+                    <tr>
+                        <td colspan="6" class="px-4 py-4 text-center text-red-500">
+                            <i class="fas fa-exclamation-circle mr-2"></i>Gagal memuat data siswa
+                        </td>
+                    </tr>
+                `;
+            }
+        }
+
+        // Display students in table
+        function displayStudents(students) {
+            const tbody = document.getElementById('studentsTableBody');
+            
+            if (students.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="px-4 py-4 text-center text-gray-500">
+                            <i class="fas fa-inbox mr-2"></i>Tidak ada data siswa
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            tbody.innerHTML = students.map(student => {
+                const accuracy = Math.round(student.accuracy || 0);
+                const accuracyClass = accuracy >= 70 ? 'score-high' : (accuracy >= 50 ? 'score-medium' : 'score-low');
+                
+                return `
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-4 py-4 whitespace-nowrap">
+                            <div class="flex items-center">
+                                <div class="flex-shrink-0 h-10 w-10">
+                                    ${student.photo && student.photo.startsWith('data:image') ? 
+                                        `<img src="${student.photo}" class="h-10 w-10 rounded-full object-cover">` : 
+                                        `<div class="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center">${student.photo || '👤'}</div>`
+                                    }
+                                </div>
+                                <div class="ml-4">
+                                    <div class="text-sm font-medium text-gray-900">${student.name}</div>
+                                    <div class="text-sm text-gray-500">${student.id.substring(0, 8)}</div>
+                                </div>
+                            </div>
+                        </td>
+                        <td class="px-4 py-4 whitespace-nowrap">
+                            <div class="text-sm text-gray-900">${student.class || 'Tidak diketahui'}</div>
+                        </td>
+                        <td class="px-4 py-4 whitespace-nowrap">
+                            <span class="score-badge score-high">${student.totalScore || 0}</span>
+                        </td>
+                        <td class="px-4 py-4 whitespace-nowrap">
+                            <div class="text-sm text-gray-900">${student.racesPlayed || 0}</div>
+                        </td>
+                        <td class="px-4 py-4 whitespace-nowrap">
+                            <span class="score-badge ${accuracyClass}">${accuracy}%</span>
+                        </td>
+                        <td class="px-4 py-4 whitespace-nowrap text-sm font-medium">
+                            <button onclick="viewStudentDetail('${student.id}')" class="text-islamic-green hover:text-islamic-light mr-3">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                            <button onclick="editStudent('${student.id}')" class="text-blue-600 hover:text-blue-900 mr-3">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            <button onclick="deleteStudent('${student.id}')" class="text-red-600 hover:text-red-900">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // View student detail
+        async function viewStudentDetail(studentId) {
+            const student = currentStudents.find(s => s.id === studentId);
+            if (!student) return;
+            
+            document.getElementById('detailStudentName').textContent = `Detail Siswa - ${student.name}`;
+            
+            const detailContent = `
+                <div class="space-y-4">
+                    <div class="flex justify-center">
+                        ${student.photo && student.photo.startsWith('data:image') ? 
+                            `<img src="${student.photo}" class="h-24 w-24 rounded-full object-cover">` : 
+                            `<div class="h-24 w-24 rounded-full bg-gray-200 flex items-center justify-center text-3xl">${student.photo || '👤'}</div>`
+                        }
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-gray-50 p-3 rounded-lg">
+                            <div class="text-sm text-gray-600">Nama Lengkap</div>
+                            <div class="font-semibold">${student.name}</div>
+                        </div>
+                        <div class="bg-gray-50 p-3 rounded-lg">
+                            <div class="text-sm text-gray-600">Kelas</div>
+                            <div class="font-semibold">${student.class || 'Tidak diketahui'}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-gray-50 p-3 rounded-lg">
+                            <div class="text-sm text-gray-600">Total Poin</div>
+                            <div class="font-semibold text-2xl text-green-600">${student.totalScore || 0}</div>
+                        </div>
+                        <div class="bg-gray-50 p-3 rounded-lg">
+                            <div class="text-sm text-gray-600">Race Dimainkan</div>
+                            <div class="font-semibold">${student.racesPlayed || 0}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-gray-50 p-3 rounded-lg">
+                            <div class="text-sm text-gray-600">Akurasi</div>
+                            <div class="font-semibold text-xl">${Math.round(student.accuracy || 0)}%</div>
+                        </div>
+                        <div class="bg-gray-50 p-3 rounded-lg">
+                            <div class="text-sm text-gray-600">Status</div>
+                            <div class="font-semibold">
+                                <span class="px-2 py-1 rounded-full bg-green-100 text-green-800">
+                                    Aktif
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-gray-50 p-3 rounded-lg">
+                        <div class="text-sm text-gray-600 mb-2">Riwayat Aktivitas Terakhir</div>
+                        <div class="text-sm">
+                            ${student.lastActive ? student.lastActive.toDate().toLocaleString('id-ID') : 'Tidak diketahui'}
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('studentDetailContent').innerHTML = detailContent;
+            document.getElementById('studentDetailModal').classList.remove('hidden');
+        }
+
+        // Close student detail
+        function closeStudentDetail() {
+            document.getElementById('studentDetailModal').classList.add('hidden');
+        }
+
+        // Edit student
+        async function editStudent(studentId) {
+            alert('Fitur edit siswa akan segera hadir');
+        }
+
+        // Delete student
+        async function deleteStudent(studentId) {
+            if (!confirm('Apakah Anda yakin ingin menghapus siswa ini?')) return;
+            alert('Fitur hapus siswa akan segera hadir');
+        }
+
+        // Admin functions
+        function exportData() {
+            alert('Fitur ekspor data akan segera hadir');
+        }
+
+        function importData() {
+            alert('Fitur impor data akan segera hadir');
+        }
+
+        function clearAllData() {
+            if (confirm('Apakah Anda yakin ingin menghapus semua data? Tindakan ini tidak dapat dibatalkan!')) {
+                alert('Fitur hapus semua data akan segera hadir');
+            }
+        }
+
+        function manageUsers() {
+            alert('Fitur kelola pengguna akan segera hadir');
+        }
+
+        function systemSettings() {
+            alert('Fitur pengaturan sistem akan segera hadir');
+        }
+
+        function backupData() {
+            alert('Fitur backup data akan segera hadir');
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            showTab('results');
+            updateFirebaseStatus(true);
+            
+            // Load classes for filter
+            loadClasses();
+        });
+
+        // Load classes for filter
+        async function loadClasses() {
+            try {
+                if (window.FirebaseService) {
+                    const classes = await window.FirebaseService.getClasses();
+                    const classFilter = document.getElementById('classFilter');
+                    const studentClassFilter = document.getElementById('studentClassFilter');
+                    
+                    // Clear existing options except "all"
+                    while (classFilter.options.length > 1) {
+                        classFilter.remove(1);
+                    }
+                    while (studentClassFilter.options.length > 1) {
+                        studentClassFilter.remove(1);
+                    }
+                    
+                    // Add classes to filter
+                    classes.forEach(className => {
+                        const option = document.createElement('option');
+                        option.value = className;
+                        option.textContent = `Kelas ${className}`;
+                        classFilter.appendChild(option.cloneNode(true));
+                        studentClassFilter.appendChild(option);
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading classes:', error);
+            }
+        }
+
+        // Profile functions (placeholder)
+        function showProfile() {
+            alert('Fitur profil akan segera hadir');
+        }
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (window.FirebaseService) {
+                window.FirebaseService.setUserOffline();
+            }
+        });
+    </script>
+</body>
+</html>
